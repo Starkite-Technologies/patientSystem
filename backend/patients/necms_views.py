@@ -1,11 +1,22 @@
 """User-token RPC gateway. No owner/service token and no clinical REST fallback."""
 from uuid import UUID
+import logging
 from django.conf import settings
 from rest_framework.decorators import api_view
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from .gateway import request_supabase
 from .serializers import ResourceSerializer, VisitRequestSerializer, VisitUpdateSerializer
 from .views import response
+
+logger = logging.getLogger(__name__)
+
+
+def object_body(request, operation):
+    data = request.data  # DRF ParseError remains a 400; unexpected errors propagate.
+    if not isinstance(data, dict):
+        logger.warning('Rejected non-object NECMS request body', extra={'operation': operation, 'status_code': 400})
+        raise ValidationError('A JSON object is required.')
+    return data
 
 
 def enabled():
@@ -41,11 +52,12 @@ def hospitals(request):
 @api_view(['POST'])
 def contexts(request):
     enabled()
+    data = object_body(request, 'context')
     try:
-        hospital = str(UUID(str(request.data.get('hospital_id', ''))))
+        hospital = str(UUID(str(data.get('hospital_id', ''))))
     except (ValueError, TypeError):
         raise ValidationError('A valid hospital is required.') from None
-    purpose = request.data.get('purpose', 'clinical')
+    purpose = data.get('purpose', 'clinical')
     if purpose not in ('clinical', 'display'):
         raise ValidationError('Invalid context purpose.')
     # Database derives auth.uid() and checks live membership; body has no authority.
@@ -113,11 +125,12 @@ def staff(request, hospital_id):
     context = hospital_context(request, hospital_id, 'membership.manage')
     if request.method == 'GET':
         return response(rpc(request, 'necms_staff', context=context))
+    data = object_body(request, 'staff')
     try:
-        user_id, role_id = str(UUID(str(request.data.get('user_id', '')))), str(UUID(str(request.data.get('role_id', ''))))
+        user_id, role_id = str(UUID(str(data.get('user_id', '')))), str(UUID(str(data.get('role_id', ''))))
     except ValueError:
         raise ValidationError('Valid staff and role UUIDs are required.') from None
-    active, reason = request.data.get('active'), request.data.get('reason')
+    active, reason = data.get('active'), data.get('reason')
     if not isinstance(active, bool) or not isinstance(reason, str) or not reason.strip() or len(reason) > 300:
         raise ValidationError('Active state and a reason of at most 300 characters are required.')
     return response({'id': rpc(request, 'necms_set_membership',
@@ -127,7 +140,7 @@ def staff(request, hospital_id):
 @api_view(['GET', 'POST'])
 def configuration(request, hospital_id):
     context = hospital_context(request, hospital_id, 'hospital.configure')
-    settings_input = request.data.get('settings') if request.method == 'POST' else None
+    settings_input = object_body(request, 'configuration').get('settings') if request.method == 'POST' else None
     if request.method == 'POST' and not isinstance(settings_input, dict):
         raise ValidationError('Operational settings must be an object.')
     return response(rpc(request, 'necms_configuration', {'p_settings': settings_input}, context))
