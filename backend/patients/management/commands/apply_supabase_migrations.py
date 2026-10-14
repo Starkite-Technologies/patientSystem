@@ -21,11 +21,17 @@ def migration_body(sql):
 class Command(BaseCommand):
     help = 'Apply tracked Supabase SQL migrations using the private DATABASE_URL.'
 
+    def add_arguments(self, parser):
+        parser.add_argument('--include-necms', action='store_true',
+                            help='Only after target/schema/provenance/recovery verification and specific execution approval.')
+
     def handle(self, *args, **options):
+        migrations = sorted((Path(settings.ROOT_DIR) / 'supabase' / 'migrations').glob('*.sql'))
+        if any('necms_' in path.name for path in migrations) and not options.get('include_necms'):
+            raise CommandError('Prepared NECMS migrations are blocked. Verify target, schema, ownership and recovery and obtain execution approval before explicitly including them.')
         database_url = os.getenv('DATABASE_URL', '').strip()
         if not database_url:
             raise CommandError('Add DATABASE_URL to the ignored .env. The publishable key cannot run migrations.')
-        migrations = sorted((Path(settings.ROOT_DIR) / 'supabase' / 'migrations').glob('*.sql'))
         try:
             connection = psycopg.connect(database_url, sslmode='require', connect_timeout=10, autocommit=True)
         except psycopg.Error:

@@ -18,13 +18,14 @@ WORKFLOW_MESSAGES = {
 }
 
 
-def request_supabase(method, path, token, *, params=None, body=None):
+def request_supabase(method, path, token, *, params=None, body=None, context=None):
     if not settings.SUPABASE_URL or not settings.SUPABASE_PUBLISHABLE_KEY:
         raise UpstreamUnavailable('Supabase project settings are missing on the backend.')
     try:
         response = httpx.request(
             method, settings.SUPABASE_URL + path,
-            headers={'apikey': settings.SUPABASE_PUBLISHABLE_KEY, 'Authorization': f'Bearer {token}'},
+            headers={'apikey': settings.SUPABASE_PUBLISHABLE_KEY, 'Authorization': f'Bearer {token}',
+                     **({'X-NECMS-Context': str(context)} if context else {})},
             params=params, json=body, timeout=httpx.Timeout(10.0, connect=5.0),
             follow_redirects=False,
         )

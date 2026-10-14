@@ -24,6 +24,8 @@ def health(request):
 
 @api_view(['GET'])
 def board(request):
+    if settings.NECMS_ENABLED:
+        raise PermissionDenied('Select an authorised hospital context.')
     role = staff_role(request.auth, request.user.id)
     visits = request_supabase('GET', '/rest/v1/visit_board', request.auth, params={'select': '*', 'order': 'arrived_at.asc'})
     resources = request_supabase('GET', '/rest/v1/resources', request.auth, params={'select': '*', 'order': 'name.asc'})
@@ -32,6 +34,8 @@ def board(request):
 
 
 def write_visit(request, visit_id=None):
+    if settings.NECMS_ENABLED:
+        raise PermissionDenied('Select an authorised hospital context.')
     role = staff_role(request.auth, request.user.id)
     if role not in ('clinician', 'coordinator', 'nurse', 'surgeon'):
         raise PermissionDenied('A nurse, surgeon, clinician, or coordinator account is required.')
@@ -62,6 +66,8 @@ def update_visit(request, visit_id):
 
 @api_view(['PATCH'])
 def update_resource(request, resource_id):
+    if settings.NECMS_ENABLED:
+        raise PermissionDenied('Select an authorised hospital context.')
     if staff_role(request.auth, request.user.id) not in ('nurse', 'coordinator'):
         raise PermissionDenied('A nurse or coordinator account is required.')
     serializer = ResourceSerializer(data=request.data)

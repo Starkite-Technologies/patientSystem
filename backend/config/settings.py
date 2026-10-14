@@ -28,6 +28,7 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 USE_TZ = True
 TIME_ZONE = 'Africa/Johannesburg'
 APPEND_SLASH = False
+NECMS_ENABLED = os.getenv('NECMS_ENABLED', 'false').lower() == 'true'
 DATA_UPLOAD_MAX_MEMORY_SIZE = 65536
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': ['patients.authentication.SupabaseAuthentication'],

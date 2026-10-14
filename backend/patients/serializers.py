@@ -35,6 +35,7 @@ class VisitInputSerializer(serializers.Serializer):
 
 class VisitRequestSerializer(serializers.Serializer):
     input = VisitInputSerializer()
+    request_id = serializers.UUIDField(required=False)
 
 
 class VisitUpdateSerializer(VisitRequestSerializer):
