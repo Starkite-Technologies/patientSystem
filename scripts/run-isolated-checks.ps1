@@ -6,7 +6,7 @@ $taskPreviousLocation = Get-Location
 $taskVariableNames = @(
     'VITE_SUPABASE_URL', 'VITE_SUPABASE_PUBLISHABLE_KEY',
     'SUPABASE_URL', 'SUPABASE_PUBLISHABLE_KEY', 'DATABASE_URL',
-    'DJANGO_DEBUG', 'DJANGO_SECRET_KEY', 'DJANGO_ALLOWED_HOSTS'
+    'DJANGO_DEBUG', 'DJANGO_SECRET_KEY', 'DJANGO_ALLOWED_HOSTS', 'NECMS_ENABLED', 'VITE_NECMS_ENABLED'
 )
 $taskPreviousEnvironment = @{}
 foreach ($taskVariableName in $taskVariableNames) {
@@ -26,6 +26,8 @@ try {
     $env:DJANGO_DEBUG = 'true'
     $env:DJANGO_SECRET_KEY = 'isolated-tests-only-not-a-deployment-secret'
     $env:DJANGO_ALLOWED_HOSTS = 'localhost,127.0.0.1,testserver'
+    $env:NECMS_ENABLED = 'false'
+    $env:VITE_NECMS_ENABLED = 'false'
 
     & npm.cmd test
     if ($LASTEXITCODE -ne 0) { throw 'Frontend tests failed.' }
@@ -35,6 +37,8 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'TypeScript/Vite build failed.' }
     & npm.cmd run test:database
     if ($LASTEXITCODE -ne 0) { throw 'In-memory database checks failed.' }
+    & npm.cmd run test:hospitals
+    if ($LASTEXITCODE -ne 0) { throw 'Hospital isolation database checks failed.' }
     Write-Output 'Isolated baseline checks passed. Hosted values were not used.'
 } finally {
     foreach ($taskVariableName in $taskVariableNames) {

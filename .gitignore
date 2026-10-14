@@ -6,6 +6,11 @@ dist/
 test-results/
 playwright-report/
 .supabase/
+supabase/.temp/
+supabase/.branches/
+access-token
+.access-token
+*.token
 .npm-cache/
 .venv/
 __pycache__/
