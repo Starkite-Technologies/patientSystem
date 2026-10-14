@@ -10,6 +10,17 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks(); });
 
 describe('Django API client', () => {
+  it('preserves explicit denial status even when the body is not JSON', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('Denied', { status: 403 })));
+    await expect(apiRequest('/board/')).rejects.toMatchObject({ status: 403 });
+  });
+  it('combines the supplied cancellation signal with the request timeout', async () => {
+    const controller = new AbortController();
+    const fetch = vi.fn().mockResolvedValue(new Response('{}', { status: 200 })); vi.stubGlobal('fetch', fetch);
+    await apiRequest('/board/', 'GET', undefined, 'context', controller.signal);
+    const signal = fetch.mock.calls[0][1].signal as AbortSignal;
+    controller.abort(); expect(signal.aborted).toBe(true);
+  });
   it('binds each request to its explicit hospital context', async () => {
     const fetch = vi.fn().mockImplementation(() => Promise.resolve(new Response('{}', { status: 200 }))); vi.stubGlobal('fetch', fetch);
     await apiRequest('/necms/hospitals/A/board/', 'GET', undefined, 'context-A');

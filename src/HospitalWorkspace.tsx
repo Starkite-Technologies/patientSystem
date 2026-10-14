@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Hospital, HospitalContext } from './model';
-import { apiRequest } from './lib/api';
+import { apiRequest, ApiError } from './lib/api';
+import { ProtectedRequests } from './lib/protectedRequests';
 
-export function HospitalWorkspace({ children }: { children: (context: HospitalContext) => React.ReactNode }) {
+export function HospitalWorkspace({ children, authVersion }: { children: (context: HospitalContext) => React.ReactNode; authVersion: number }) {
   const [hospitals, setHospitals] = useState<Hospital[]>([]);
   const [context, setContext] = useState<HospitalContext | null>(null);
   const [error, setError] = useState('');
@@ -32,24 +33,29 @@ export function HospitalWorkspace({ children }: { children: (context: HospitalCo
     {context && <button className="secondary" onClick={() => void select(context.hospital_id, context.purpose === 'clinical' ? 'display' : 'clinical')}>{context.purpose === 'clinical' ? 'Restricted shared display' : 'Clinical workspace'}</button>}
     {error && <span role="alert">{error}</span>}
     {!busy && !hospitals.length && !error && <span>No active hospital memberships.</span>}
-  </div>{context ? context.purpose === 'display' ? <RestrictedDisplay key={context.id} context={context} /> : children(context) : <div className="login-shell">{busy ? 'Checking hospital access…' : 'Select a hospital to continue.'}</div>}</>;
+  </div>{context ? context.purpose === 'display' ? <RestrictedDisplay key={`${context.id}:${authVersion}`} context={context} /> : children(context) : <div className="login-shell">{busy ? 'Checking hospital access…' : 'Select a hospital to continue.'}</div>}</>;
 }
 
 type DisplayRow = { display_label: string; status: string; next_action: string; space_state: string };
 function RestrictedDisplay({ context }: { context: HospitalContext }) {
   const [rows, setRows] = useState<DisplayRow[]>([]);
   const [error, setError] = useState('');
+  const requests = useMemo(() => new ProtectedRequests(), []);
   useEffect(() => {
-    let alive = true;
+    requests.activate();
     async function refresh() {
+      const ticket = requests.begin(); if (!ticket) return;
       try {
-        const next = await apiRequest<DisplayRow[]>(`/necms/hospitals/${context.hospital_id}/display-board/`, 'GET', undefined, context.id);
-        if (alive) { setRows(next); setError(''); }
-      } catch (error) { if (alive) { setRows([]); setError(error instanceof Error ? error.message : 'Display access denied.'); } }
+        const next = await apiRequest<DisplayRow[]>(`/necms/hospitals/${context.hospital_id}/display-board/`, 'GET', undefined, context.id, ticket.controller.signal);
+        if (requests.accept(ticket)) { setRows(next); setError(''); }
+      } catch (error) {
+        const denied = error instanceof ApiError && [401,403].includes(error.status);
+        if (denied ? requests.deny(ticket) : requests.accept(ticket)) { setRows([]); setError(error instanceof Error ? error.message : 'Display access denied.'); }
+      } finally { requests.finish(ticket); }
     }
     void refresh(); const timer = window.setInterval(refresh, 5000);
-    return () => { alive = false; clearInterval(timer); };
-  }, [context]);
+    return () => { requests.close(); clearInterval(timer); };
+  }, [context, requests]);
   return <main className="page-content"><h1>Emergency department display</h1><p>Restricted operational view · updates every five seconds</p>
     {error && <p role="alert">{error}</p>}<table><thead><tr><th>Display label</th><th>Status</th><th>Next service</th><th>Space</th></tr></thead>
     <tbody>{rows.map(row => <tr key={row.display_label}><td>{row.display_label}</td><td>{row.status}</td><td>{row.next_action}</td><td>{row.space_state}</td></tr>)}</tbody></table></main>;

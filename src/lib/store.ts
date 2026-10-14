@@ -60,14 +60,14 @@ function persist(data: BoardData) {
   window.dispatchEvent(new Event('patientflow-change'));
 }
 export function resetDemo() { persist(structuredClone(initial)); }
-export async function loadBoard(context?: HospitalContext): Promise<BoardData> {
+export async function loadBoard(context?: HospitalContext, signal?: AbortSignal): Promise<BoardData> {
   if (!supabase) return demoData();
-  return apiRequest<BoardData>(hospitalPath('/board/', context), 'GET', undefined, context?.id);
+  return apiRequest<BoardData>(hospitalPath('/board/', context), 'GET', undefined, context?.id, signal);
 }
-export async function saveVisit(input: VisitInput, existing?: Visit, context?: HospitalContext, requestId?: string) {
+export async function saveVisit(input: VisitInput, existing?: Visit, context?: HospitalContext, requestId?: string, signal?: AbortSignal) {
   validateInput(input);
   if (supabase) {
-    await apiRequest(hospitalPath(existing ? `/visits/${existing.id}/` : '/visits/', context), existing ? 'PATCH' : 'POST', { input, ...(context && requestId ? { request_id: requestId } : {}), ...(existing ? { version: existing.version, patient_version: existing.patient_version } : {}) }, context?.id);
+    await apiRequest(hospitalPath(existing ? `/visits/${existing.id}/` : '/visits/', context), existing ? 'PATCH' : 'POST', { input, ...(context && requestId ? { request_id: requestId } : {}), ...(existing ? { version: existing.version, patient_version: existing.patient_version } : {}) }, context?.id, signal);
     return;
   }
   const data = demoData();
@@ -106,9 +106,9 @@ export async function saveVisit(input: VisitInput, existing?: Visit, context?: H
   persist(data);
 }
 
-export async function setResourceState(resource: Resource, state: Resource['state'], context?: HospitalContext) {
+export async function setResourceState(resource: Resource, state: Resource['state'], context?: HospitalContext, signal?: AbortSignal) {
   if (supabase) {
-    await apiRequest(hospitalPath(`/resources/${resource.id}/`, context), 'PATCH', { state }, context?.id);
+    await apiRequest(hospitalPath(`/resources/${resource.id}/`, context), 'PATCH', { state }, context?.id, signal);
     return;
   }
   const data = demoData();
