@@ -1,5 +1,15 @@
 # PatientFlow
 
+NECMS multi-hospital source changes are prepared behind disabled development flags.
+Read [the Milestone 2B report](docs/architecture/NECMS_2B_COMPLETION_REPORT.md) before enabling them.
+The new migration has only run in disposable tests; do not apply it to a hosted
+project without target/schema/provenance/recovery verification and explicit execution approval.
+
+Isolated software checks: `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/run-isolated-checks.ps1`.
+Hospital browser checks: run `node scripts/start-necms-test.mjs`, then
+`node scripts/check-hospital-browser.mjs` in another terminal. This harness uses
+synthetic sessions and mocked Django responses, and blocks external HTTP traffic.
+
 Emergency department patient tracking prototype for Starkite Technologies. Tracks every visit, assigned urgency, location, responsible clinician, pending service, and elapsed time. This is a workflow prototype; clinical priorities and colour meanings must be agreed with the hospital before clinical use.
 
 ## Run locally
