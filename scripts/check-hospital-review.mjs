@@ -36,6 +36,7 @@ try {
   findings.push({ check:'all_original_record_columns_and_archives_preserved',result:'PASS',tables:preservedTables.length });
   assert.equal((await db.query("select count(*)::integer as n from pg_publication_tables where pubname='supabase_realtime'")).rows[0].n,0);
   findings.push({ check:'clinical_publication_tables_removed',result:'PASS',before:3,after:0 });
+  await db.exec(await readFile(new URL('../supabase/migrations/202610140007_necms_resource_audit_integrity.sql',import.meta.url),'utf8'));
   await db.exec(await readFile(new URL('../supabase/tests/hospital_isolation.sql',import.meta.url),'utf8'));
   await db.exec(`reset role;
     update public.hospital_memberships set valid_until=null,active=true,authorization_version=authorization_version+1 where user_id='60000000-0000-0000-0000-000000000004';
@@ -44,11 +45,16 @@ try {
     select set_config('request.jwt.claim.sub','60000000-0000-0000-0000-000000000004',false);
     select set_config('request.headers',jsonb_build_object('x-necms-context',public.necms_create_context('a0000000-0000-0000-0000-000000000001')->>'id')::text,false);`);
   const before = (await db.query("select count(*)::integer as n from public.audit_events where action='resource_updated'")).rows[0].n;
-  await db.query("select public.set_resource_state('a2000000-0000-0000-0000-000000000002','cleaning')");
+  let denial = null;
+  try { await db.query("select public.set_resource_state('a2000000-0000-0000-0000-000000000002','cleaning')"); }
+  catch(error) { denial = error.code; }
   const after = (await db.query("select count(*)::integer as n from public.audit_events where action='resource_updated'")).rows[0].n;
   const state = (await db.query("select state from public.resources where id='a2000000-0000-0000-0000-000000000002'")).rows[0].state;
-  try { assert.equal(after-before,1,'Every permitted resource change must create an audit event, including members without a global profile');
-    findings.push({ check:'resource_audit_completeness',result:'PASS' });
+  try {
+    assert.equal(denial,'42501','A missing staff identity must reject mutation');
+    assert.equal(state,'available','Denied mutation must preserve resource state');
+    assert.equal(after-before,0,'Denied mutation must not record success');
+    findings.push({ check:'resource_audit_completeness',result:'PASS',missing_profile_denied:true,resource_unchanged:true });
   } catch { findings.push({ check:'resource_audit_completeness',result:'FAIL',resource_changed:state==='cleaning',audit_events_added:after-before }); }
   // Catalog verification without disabling RLS or broadening test grants.
   const tables=(await db.query(`select c.relname,c.relrowsecurity from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname in ('public','necms_private') and c.relkind='r' and c.relname<>'staff_profiles'`)).rows;
