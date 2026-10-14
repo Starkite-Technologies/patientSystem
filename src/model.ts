@@ -22,7 +22,10 @@ export interface Visit {
 export type VisitInput = Omit<Visit, 'id' | 'arrived_at' | 'updated_at' | 'version' | 'patient_id' | 'patient_version' | 'names_need_review'>;
 export interface Resource { id: string; name: string; kind: string; state: 'available' | 'cleaning' | 'unavailable' }
 export interface AuditEvent { id: string; visit_id: string; actor: string; action: string; created_at: string; summary: string }
-export interface BoardData { visits: Visit[]; resources: Resource[]; events: AuditEvent[]; role: Role }
+export type PatientOption = Pick<Visit, 'patient_id' | 'patient_ref' | 'first_name' | 'last_name' | 'date_of_birth'>;
+export interface BoardData { visits: Visit[]; resources: Resource[]; events: AuditEvent[]; role: Role; capabilities?: string[]; patients?: PatientOption[] }
+export interface HospitalContext { id: string; hospital_id: string; purpose: 'clinical' | 'display'; expires_at: string }
+export interface Hospital { id: string; name: string; facility_type: 'public' | 'private' | 'other' }
 export const fullName = (person: { first_name: string; last_name: string }) => [person.first_name, person.last_name].filter(Boolean).join(' ');
 export const active = (visit: Visit) => !['discharged', 'transferred'].includes(visit.status);
 export const compareVisits = (a: Visit, b: Visit) => a.priority - b.priority || Date.parse(a.arrived_at) - Date.parse(b.arrived_at) || a.id.localeCompare(b.id);

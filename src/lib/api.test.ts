@@ -10,6 +10,13 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks(); });
 
 describe('Django API client', () => {
+  it('binds each request to its explicit hospital context', async () => {
+    const fetch = vi.fn().mockImplementation(() => Promise.resolve(new Response('{}', { status: 200 }))); vi.stubGlobal('fetch', fetch);
+    await apiRequest('/necms/hospitals/A/board/', 'GET', undefined, 'context-A');
+    await apiRequest('/necms/hospitals/B/board/', 'GET', undefined, 'context-B');
+    expect(fetch.mock.calls[0][1].headers['X-NECMS-Context']).toBe('context-A');
+    expect(fetch.mock.calls[1][1].headers['X-NECMS-Context']).toBe('context-B');
+  });
   it('uses the signed-in token and sends versioned edits to Django', async () => {
     const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: 'visit' }), { status: 200 }));
     vi.stubGlobal('fetch', fetch);

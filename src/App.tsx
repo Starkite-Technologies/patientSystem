@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import { Activity, ArrowRight, BedDouble, Check, ChevronRight, ClipboardList, Clock3, LayoutDashboard, LogOut, Monitor, Plus, RefreshCw, Search, ShieldCheck, Users, X } from 'lucide-react';
-import { actions, active, ageAtDate, hospitalDate, canEditVisits, canManageResources, compareVisits, fullName, priorities, queuePosition, statuses, waitLabel, type BoardData, type Resource, type Visit, type VisitInput } from './model';
+import { actions, active, ageAtDate, hospitalDate, canEditVisits, canManageResources, compareVisits, fullName, priorities, queuePosition, statuses, waitLabel, type BoardData, type HospitalContext, type Resource, type Visit, type VisitInput } from './model';
 import { configurationError, supabase } from './lib/supabase';
-import { loadBoard, resetDemo, saveVisit, setResourceState } from './lib/store';
+import { loadBoard, resetDemo, saveVisit, setResourceState, necmsEnabled } from './lib/store';
+
+import { HospitalWorkspace, HospitalStaff } from './HospitalWorkspace';
+import { apiRequest } from './lib/api';
 
 type View = 'board' | 'resources' | 'activity' | 'archive';
 const emptyBoard: BoardData = { visits: [], resources: [], events: [], role: 'viewer' };
@@ -22,8 +25,9 @@ export default function App() {
     return () => { alive = false; subscription.unsubscribe(); };
   }, []);
   if (configurationError) return <div className="login-shell"><div className="login-card"><h1>Connection setup</h1><p>{configurationError}</p></div></div>;
-  if (!authReady) return <div className="login-shell">Checking staff session…</div>;
+  if (!authReady) return <div className="login-shell">Checking staff sessionâ€¦</div>;
   if (supabase && !session) return <Login initialError={authError} />;
+  if (supabase && necmsEnabled) return <HospitalWorkspace key={session?.user.id}>{context => <Board key={context.id} email={session?.user.email} context={context} />}</HospitalWorkspace>;
   return <Board key={session?.user.id ?? 'demo'} email={session?.user.email} />;
 }
 
@@ -45,15 +49,16 @@ function Login({ initialError }: { initialError: string }) {
     <label>Email<input type="email" name="email" autoComplete="username" required /></label>
     <label>Password<input type="password" name="password" autoComplete="current-password" required /></label>
     {error && <p className="error" role="alert">{error}</p>}
-    <button className="primary" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}<ArrowRight size={17} /></button>
+    <button className="primary" disabled={busy}>{busy ? 'Signing inâ€¦' : 'Sign in'}<ArrowRight size={17} /></button>
     <small>Accounts are provisioned by your administrator.</small>
   </form></div>;
 }
 
-function Board({ email }: { email?: string }) {
+function Board({ email, context }: { email?: string; context?: HospitalContext }) {
   const [data, setData] = useState<BoardData>(emptyBoard);
   const [view, setView] = useState<View>('board');
   const [search, setSearch] = useState('');
+  const [historyOffset, setHistoryOffset] = useState(0);
   const [priority, setPriority] = useState('all');
   const [status, setStatus] = useState('all');
   const [action, setAction] = useState('all');
@@ -66,26 +71,27 @@ function Board({ email }: { email?: string }) {
   const [wall, setWall] = useState(false);
   const [now, setNow] = useState(Date.now());
   const generation = useRef(0);
-  const canEdit = canEditVisits(data.role);
+  const canEdit = context ? Boolean(data.capabilities?.includes('encounter.register') && data.capabilities?.includes('encounter.update_legacy')) : canEditVisits(data.role);
   const refresh = useCallback(async () => {
     const request = ++generation.current;
     try {
-      const next = await loadBoard();
+      const next = await loadBoard(context);
+      if (context && view === 'archive') {
+        const history = await apiRequest<Visit[]>(`/necms/hospitals/${context.hospital_id}/history/?offset=${historyOffset}`, 'GET', undefined, context.id);
+        next.visits = [...next.visits, ...history];
+      }
       if (request === generation.current) { setData(next); setSyncedAt(Date.now()); setError(''); }
-    } catch (error) { if (request === generation.current) setError(error instanceof Error ? error.message : 'Could not refresh the board.'); }
+    } catch (error) { if (request === generation.current) { setError(error instanceof Error ? error.message : 'Could not refresh the board.'); if (context) { setData(emptyBoard); setEditor(null); setSyncedAt(null); } } }
     finally { if (request === generation.current) setLoading(false); }
-  }, []);
+  }, [context, view, historyOffset]);
   useEffect(() => {
     void refresh();
     const reload = () => void refresh();
     window.addEventListener('storage', reload); window.addEventListener('patientflow-change', reload); window.addEventListener('online', reload);
-    const timer = window.setInterval(() => { setNow(Date.now()); void refresh(); }, 30000);
-    const channel = supabase?.channel('department-board')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'visits' }, reload)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'resources' }, reload)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'patients' }, reload)
-      .subscribe(state => { setConnection(state === 'SUBSCRIBED' ? 'Live' : 'Reconnecting'); if (state === 'SUBSCRIBED') reload(); });
-    return () => { generation.current++; clearInterval(timer); window.removeEventListener('storage', reload); window.removeEventListener('patientflow-change', reload); window.removeEventListener('online', reload); if (channel) void supabase!.removeChannel(channel); };
+    const timer = window.setInterval(() => { setNow(Date.now()); void refresh(); }, context ? 5000 : 30000);
+    // Raw clinical row subscriptions cannot validate an HTTP hospital context.
+    if (supabase) setConnection('Authorised polling');
+    return () => { generation.current++; clearInterval(timer); window.removeEventListener('storage', reload); window.removeEventListener('patientflow-change', reload); window.removeEventListener('online', reload); };
   }, [refresh]);
   useEffect(() => { if (!notice) return; const timeout = setTimeout(() => setNotice(''), 5000); return () => clearTimeout(timeout); }, [notice]);
   const current = data.visits.filter(active);
@@ -110,9 +116,9 @@ function Board({ email }: { email?: string }) {
     </aside>}
     <main>
       <header className="topbar"><span>Emergency department <ChevronRight size={13} /> <strong>{view === 'board' ? 'Patient board' : view === 'resources' ? 'Spaces & resources' : view === 'archive' ? 'Completed visits' : 'Activity log'}</strong></span><span className="topbar-date">{new Date(now).toLocaleDateString('en-ZA', { weekday: 'short', day: 'numeric', month: 'short' })}<Clock3 size={15} />{new Date(now).toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' })}</span></header>
-      {!supabase && <div className="demo-banner"><span><strong>Demo workspace</strong> · Fictional patients, saved in this browser. Priority colours are illustrative.</span><button onClick={() => { if (window.confirm('Reset all fictional demo patients and changes?')) { resetDemo(); setNotice('Demo reset.'); } }}>Reset demo</button></div>}
+      {!supabase && <div className="demo-banner"><span><strong>Demo workspace</strong> Â· Fictional patients, saved in this browser. Priority colours are illustrative.</span><button onClick={() => { if (window.confirm('Reset all fictional demo patients and changes?')) { resetDemo(); setNotice('Demo reset.'); } }}>Reset demo</button></div>}
       <div className="page-content">
-        <div className="page-heading"><div><p className="eyebrow">DEPARTMENT OVERVIEW</p><h1>{view === 'board' ? 'Patient board' : view === 'resources' ? 'Spaces & resources' : view === 'archive' ? 'Completed visits' : 'Activity log'}</h1><p>{view === 'board' ? 'Every patient. Every next step. One shared view.' : view === 'resources' ? 'See what is available and where patients are receiving care.' : view === 'archive' ? 'Discharged and transferred patients remain in the visit history.' : 'A record of patient and resource changes.'}</p></div><div className="heading-actions"><button className="secondary" onClick={() => { setWall(!wall); setView('board'); }}><Monitor size={16} />{wall ? 'Exit display' : 'Display mode'}</button>{!wall && canEdit && <button className="primary" onClick={() => setEditor('new')}><Plus size={18} />Register patient</button>}</div></div>
+        <div className="page-heading"><div><p className="eyebrow">DEPARTMENT OVERVIEW</p><h1>{view === 'board' ? 'Patient board' : view === 'resources' ? 'Spaces & resources' : view === 'archive' ? 'Completed visits' : 'Activity log'}</h1><p>{view === 'board' ? 'Every patient. Every next step. One shared view.' : view === 'resources' ? 'See what is available and where patients are receiving care.' : view === 'archive' ? 'Discharged and transferred patients remain in the visit history.' : 'A record of patient and resource changes.'}</p></div><div className="heading-actions"><button disabled={Boolean(context)} title={context ? 'Use Restricted shared display above' : undefined} className="secondary" onClick={() => { if (!context) { setWall(!wall); setView('board'); } }}><Monitor size={16} />{wall ? 'Exit display' : 'Display mode'}</button>{!wall && canEdit && <button className="primary" onClick={() => setEditor('new')}><Plus size={18} />Register patient</button>}</div></div>
         {error && <div className="error" role="alert">{error} <button onClick={() => void refresh()}>Retry</button></div>}
         {notice && <div className="notice" role="status"><Check size={16} />{notice}</div>}
         <section className="stats" aria-label="Department totals">
@@ -123,9 +129,9 @@ function Board({ email }: { email?: string }) {
         </section>
         {(view === 'board' || view === 'archive') && <section className="board-panel">
           <div className="panel-heading"><div><h2>{view === 'archive' ? 'Visit history' : 'Department patients'} <span className="count-pill">{visible.length}</span></h2><p>Ordered by assigned priority, then arrival time.</p></div><div className={`sync-status ${stale ? 'sync-warning' : ''}`}><span className="status-dot" />{stale ? 'Updates delayed' : connection}<button className="icon-button" aria-label="Refresh board" onClick={() => void refresh()}><RefreshCw size={14} /></button></div></div>
-          <div className="filters"><label className="search"><Search size={17} /><input aria-label="Search patients" placeholder="Search patients, reference, or clinician…" value={search} onChange={e => setSearch(e.target.value)} /></label><select aria-label="Filter by priority" value={priority} onChange={e => setPriority(e.target.value)}><option value="all">All priorities</option><option value={0} disabled>Choose a priority</option>{priorities.map((p, i) => <option key={p} value={i + 1}>{p}</option>)}</select><select aria-label="Filter by status" value={status} onChange={e => setStatus(e.target.value)}><option value="all">All statuses</option>{Object.entries(statuses).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select><select aria-label="Filter by next service" value={action} onChange={e => setAction(e.target.value)}><option value="all">All services</option>{Object.entries(actions).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></div>
+          <div className="filters"><label className="search"><Search size={17} /><input aria-label="Search patients" placeholder="Search patients, reference, or clinicianâ€¦" value={search} onChange={e => setSearch(e.target.value)} /></label><select aria-label="Filter by priority" value={priority} onChange={e => setPriority(e.target.value)}><option value="all">All priorities</option><option value={0} disabled>Choose a priority</option>{priorities.map((p, i) => <option key={p} value={i + 1}>{p}</option>)}</select><select aria-label="Filter by status" value={status} onChange={e => setStatus(e.target.value)}><option value="all">All statuses</option>{Object.entries(statuses).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select><select aria-label="Filter by next service" value={action} onChange={e => setAction(e.target.value)}><option value="all">All services</option>{Object.entries(actions).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></div>
           <div className="table-scroll" role="region" aria-label="Patient list" tabIndex={0}><table><thead><tr><th>Patient</th><th>Priority</th><th>Status</th><th>Location</th><th>Next step / queue</th><th>Clinician</th><th>Time in ED</th>{!wall && <th><span className="sr-only">Details</span></th>}</tr></thead><tbody>{visible.map(v => <tr key={v.id}>
-            <td><div className="patient-cell">{!wall && <span className={`patient-avatar priority-border-${v.priority}`}>{fullName(v).split(' ').map(n => n[0]).slice(0, 2).join('')}</span>}<div><strong>{wall ? v.patient_ref : fullName(v)}</strong><small title="Age calculated at arrival">{wall ? `${ageAtDate(v.date_of_birth, hospitalDate(v.arrived_at)) ?? '—'} years` : `${v.patient_ref} · ${ageAtDate(v.date_of_birth, hospitalDate(v.arrived_at)) ?? '—'} years`}</small>{!wall && <span className="complaint">{v.complaint}{v.names_need_review && <small>Name needs review</small>}</span>}</div></div></td>
+            <td><div className="patient-cell">{!wall && <span className={`patient-avatar priority-border-${v.priority}`}>{fullName(v).split(' ').map(n => n[0]).slice(0, 2).join('')}</span>}<div><strong>{wall ? v.patient_ref : fullName(v)}</strong><small title="Age calculated at arrival">{wall ? `${ageAtDate(v.date_of_birth, hospitalDate(v.arrived_at)) ?? 'â€”'} years` : `${v.patient_ref} Â· ${ageAtDate(v.date_of_birth, hospitalDate(v.arrived_at)) ?? 'â€”'} years`}</small>{!wall && <span className="complaint">{v.complaint}{v.names_need_review && <small>Name needs review</small>}</span>}</div></div></td>
             <td><span className={`priority priority-${v.priority}`}><span />{priorities[v.priority - 1]}</span></td>
             <td><span className={`care-status status-${v.status}`}>{statuses[v.status]}</span></td>
             <td><span className="location"><BedDouble size={14} />{v.location || 'Unassigned'}</span></td>
@@ -134,18 +140,20 @@ function Board({ email }: { email?: string }) {
             <td><span className="time"><Clock3 size={14} />{waitLabel(v.arrived_at, active(v) ? now : Date.parse(v.updated_at))}</span></td>
             {!wall && <td><button className="icon-button" aria-label={`View ${fullName(v)}`} onClick={() => setEditor(v)}><ChevronRight size={18} /></button></td>}
           </tr>)}</tbody></table></div>
-          {!visible.length && <div className="empty"><Users size={28} /><h3>{loading ? 'Loading patients…' : 'No patients to show'}</h3><p>{loading ? 'Fetching the latest board.' : 'Change your filters or register a patient.'}</p></div>}
-          <footer className="board-footer"><span><ShieldCheck size={14} />Priorities assigned by clinical staff · Queue positions can change</span><span>{syncedAt ? `Last synced ${new Date(syncedAt).toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' })}` : 'Not synchronised'}</span></footer>
+          {!visible.length && <div className="empty"><Users size={28} /><h3>{loading ? 'Loading patientsâ€¦' : 'No patients to show'}</h3><p>{loading ? 'Fetching the latest board.' : 'Change your filters or register a patient.'}</p></div>}
+          <footer className="board-footer"><span><ShieldCheck size={14} />Priorities assigned by clinical staff Â· Queue positions can change</span><span>{syncedAt ? `Last synced ${new Date(syncedAt).toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' })}` : 'Not synchronised'}</span></footer>
         </section>}
+        {context && view === 'archive' && <div className="heading-actions"><button className="secondary" disabled={historyOffset === 0} onClick={() => setHistoryOffset(Math.max(0, historyOffset - 100))}>Previous history page</button><button className="secondary" disabled={data.visits.filter(v => !active(v)).length < 100} onClick={() => setHistoryOffset(historyOffset + 100)}>Next history page</button></div>}
         {view === 'resources' && <section className="resource-grid">{data.resources.map(r => {
           const patient = current.find(v => v.resource_id === r.id);
-          return <article className="resource-card" key={r.id}><div className="resource-top"><BedDouble size={22} /><span className={`care-status ${patient ? 'status-in_treatment' : r.state === 'available' ? 'status-ready' : 'status-awaiting_results'}`}>{patient ? 'Occupied' : r.state}</span></div><h2>{r.name}</h2><p>{r.kind}</p><div className="resource-patient">{patient ? <><strong>{fullName(patient)}</strong><small>{patient.patient_ref} · {statuses[patient.status]}</small></> : <span>{r.state === 'available' ? 'Ready for assignment' : 'Unavailable for assignment'}</span>}</div>{canManageResources(data.role) && <label>Space status<select aria-label={`Status for ${r.name}`} value={r.state} disabled={Boolean(patient)} onChange={async e => { try { await setResourceState(r, e.target.value as Resource['state']); await refresh(); setNotice('Space status updated.'); } catch (error) { setError(error instanceof Error ? error.message : 'Could not update space.'); } }}><option value="available">Available</option><option value="cleaning">Cleaning</option><option value="unavailable">Unavailable</option></select></label>}</article>;
+          return <article className="resource-card" key={r.id}><div className="resource-top"><BedDouble size={22} /><span className={`care-status ${patient ? 'status-in_treatment' : r.state === 'available' ? 'status-ready' : 'status-awaiting_results'}`}>{patient ? 'Occupied' : r.state}</span></div><h2>{r.name}</h2><p>{r.kind}</p><div className="resource-patient">{patient ? <><strong>{fullName(patient)}</strong><small>{patient.patient_ref} Â· {statuses[patient.status]}</small></> : <span>{r.state === 'available' ? 'Ready for assignment' : 'Unavailable for assignment'}</span>}</div>{(context ? data.capabilities?.includes('resource.coordinate') : canManageResources(data.role)) && <label>Space status<select aria-label={`Status for ${r.name}`} value={r.state} disabled={Boolean(patient)} onChange={async e => { try { await setResourceState(r, e.target.value as Resource['state'], context); await refresh(); setNotice('Space status updated.'); } catch (error) { setError(error instanceof Error ? error.message : 'Could not update space.'); } }}><option value="available">Available</option><option value="cleaning">Cleaning</option><option value="unavailable">Unavailable</option></select></label>}</article>;
         })}</section>}
-        {view === 'activity' && <section className="activity-panel"><h2>Recent changes</h2>{!data.events.length && <div className="empty"><ClipboardList size={28} /><h3>No changes yet</h3><p>Register or update a patient to see activity here.</p></div>}{data.events.map(event => <div className="activity-event" key={event.id}><span className="event-icon"><ClipboardList size={16} /></span><div><strong>{event.summary}</strong><small>{event.actor} · {new Date(event.created_at).toLocaleString('en-ZA')}</small></div><span className="count-pill">{event.action}</span></div>)}</section>}
-        <p className="page-footnote">PatientFlow <span>•</span> Emergency care workspace {wall && <span>• Patient names hidden in display mode</span>}</p>
+        {view === 'activity' && <section className="activity-panel"><h2>Recent changes</h2>{!data.events.length && <div className="empty"><ClipboardList size={28} /><h3>No changes yet</h3><p>Register or update a patient to see activity here.</p></div>}{data.events.map(event => <div className="activity-event" key={event.id}><span className="event-icon"><ClipboardList size={16} /></span><div><strong>{event.summary}</strong><small>{event.actor} Â· {new Date(event.created_at).toLocaleString('en-ZA')}</small></div><span className="count-pill">{event.action}</span></div>)}</section>}
+        {context && data.capabilities?.includes('membership.manage') && <HospitalStaff key={context.id} context={context} />}
+        <p className="page-footnote">PatientFlow <span>â€¢</span> Emergency care workspace {wall && <span>â€¢ Patient names hidden in display mode</span>}</p>
       </div>
     </main>
-    {editor && <VisitDialog visit={editor === 'new' ? undefined : editor} data={data} readonly={!canEdit} onClose={() => setEditor(null)} onSaved={async () => { setEditor(null); await refresh(); setNotice(editor === 'new' ? 'Patient registered.' : 'Patient record updated.'); }} />}
+    {editor && <VisitDialog context={context} visit={editor === 'new' ? undefined : editor} data={data} readonly={!canEdit} onClose={() => setEditor(null)} onSaved={async () => { setEditor(null); await refresh(); setNotice(editor === 'new' ? 'Patient registered.' : 'Patient record updated.'); }} />}
   </div>;
 }
 
@@ -153,14 +161,15 @@ function Stat({ label, value, icon, detail, tone = 'teal' }: { label: string; va
   return <article className="stat"><div><span>{label}</span><span className={`stat-icon ${tone}`}>{icon}</span></div><strong>{value.toString().padStart(2, '0')}</strong><small>{detail}</small></article>;
 }
 
-function VisitDialog({ visit, data, readonly, onClose, onSaved }: { visit?: Visit; data: BoardData; readonly: boolean; onClose: () => void; onSaved: () => Promise<void> }) {
+function VisitDialog({ visit, data, readonly, onClose, onSaved, context }: { context?: HospitalContext; visit?: Visit; data: BoardData; readonly: boolean; onClose: () => void; onSaved: () => Promise<void> }) {
   const dialog = useRef<HTMLDialogElement>(null);
+  const requestId = useRef(crypto.randomUUID());
   const [input, setInput] = useState<VisitInput>(visit ? { patient_ref: visit.patient_ref, first_name: visit.first_name, last_name: visit.last_name, date_of_birth: visit.date_of_birth, complaint: visit.complaint, priority: visit.priority, status: visit.status, next_action: visit.next_action, location: visit.location, resource_id: visit.resource_id, assigned_to: visit.assigned_to, notes: visit.notes } : { patient_ref: '', first_name: '', last_name: '', date_of_birth: null, complaint: '', priority: 0, status: 'waiting', next_action: 'assessment', location: 'Waiting area', resource_id: null, assigned_to: '', notes: '' });
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   useEffect(() => { dialog.current?.showModal(); }, []);
   const set = <K extends keyof VisitInput>(key: K, value: VisitInput[K]) => setInput(previous => ({ ...previous, [key]: value }));
-  async function submit(event: FormEvent) { event.preventDefault(); setBusy(true); setError(''); try { await saveVisit(input, visit); await onSaved(); } catch (error) { setError(error instanceof Error ? error.message : 'Unable to save patient.'); } finally { setBusy(false); } }
+  async function submit(event: FormEvent) { event.preventDefault(); setBusy(true); setError(''); try { await saveVisit(input, visit, context, requestId.current); await onSaved(); } catch (error) { setError(error instanceof Error ? error.message : 'Unable to save patient.'); } finally { setBusy(false); } }
   return <dialog ref={dialog} className="visit-dialog" aria-labelledby="visit-dialog-title" onCancel={e => { if (busy) e.preventDefault(); else onClose(); }}>
     <form onSubmit={submit}>
       <div className="dialog-heading">
@@ -177,9 +186,9 @@ function VisitDialog({ visit, data, readonly, onClose, onSaved }: { visit?: Visi
             <div className="section-heading"><span className="section-number">01</span><div><h3 id="identity-heading">Patient identity</h3><p>Confirm who is receiving care.</p></div></div>
             <div className="form-grid">
               {!visit && <label className="full-width">Register for<select aria-label="Patient registration" value={input.patient_ref || 'new'} onChange={e => {
-                const person = data.visits.find(v => v.patient_ref === e.target.value);
+                const person = (data.patients ?? data.visits).find(v => v.patient_ref === e.target.value);
                 setInput(previous => ({ ...previous, patient_ref: person?.patient_ref ?? '', first_name: person?.first_name ?? '', last_name: person?.last_name ?? '', date_of_birth: person?.date_of_birth ?? null }));
-              }}><option value="new">New patient (new reference)</option>{Array.from(new Map(data.visits.map(v => [v.patient_id, v])).values()).map(person => <option key={person.patient_id} value={person.patient_ref}>{fullName(person)} - {person.patient_ref}</option>)}</select></label>}
+              }}><option value="new">New patient (new reference)</option>{Array.from(new Map((data.patients ?? data.visits).map(v => [v.patient_id, v])).values()).map(person => <option key={person.patient_id} value={person.patient_ref}>{fullName(person)} - {person.patient_ref}</option>)}</select></label>}
               <label><span>First name <span className="required" aria-hidden="true">*</span></span><input aria-label="First name" required maxLength={160} autoComplete="given-name" value={input.first_name} onChange={e => set('first_name', e.target.value)} placeholder="e.g. Amara" /></label>
               <label><span>Last name <span className="required" aria-hidden="true">*</span></span><input aria-label="Last name" required maxLength={160} autoComplete="family-name" value={input.last_name} onChange={e => set('last_name', e.target.value)} placeholder="e.g. Ndlovu" /></label>
               <label>Date of birth<input aria-label="Date of birth (optional if unknown)" type="date" max={hospitalDate()} value={input.date_of_birth ?? ''} onChange={e => set('date_of_birth', e.target.value || null)} /><small className="field-help">Leave blank if unknown.</small></label>

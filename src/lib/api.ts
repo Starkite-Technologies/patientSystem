@@ -1,13 +1,14 @@
 import { supabase } from './supabase';
 
-export async function apiRequest<T>(path: string, method = 'GET', body?: unknown): Promise<T> {
+export class ApiError extends Error { constructor(message: string, public status: number) { super(message); } }
+export async function apiRequest<T>(path: string, method = 'GET', body?: unknown, context?: string): Promise<T> {
   if (!supabase) throw new Error('Sign in before accessing the server.');
   const { data, error } = await supabase.auth.getSession();
   if (error || !data.session) throw new Error('Your staff session has expired. Sign in again.');
   let response: Response;
   try {
     response = await fetch(`/api${path}`, {
-      method, headers: { Authorization: `Bearer ${data.session.access_token}`, 'Content-Type': 'application/json' },
+      method, headers: { Authorization: `Bearer ${data.session.access_token}`, 'Content-Type': 'application/json', ...(context ? { 'X-NECMS-Context': context } : {}) },
       body: body === undefined ? undefined : JSON.stringify(body),
       cache: 'no-store', signal: AbortSignal.timeout(60000),
     });
@@ -16,7 +17,7 @@ export async function apiRequest<T>(path: string, method = 'GET', body?: unknown
   }
   const payload = await response.json().catch(() => null);
   if (!response.ok) {
-    if (typeof payload?.detail === 'string') throw new Error(payload.detail);
+    if (typeof payload?.detail === 'string') throw new ApiError(payload.detail, response.status);
     if (response.status === 400) throw new Error('Check the patient form for invalid or missing values.');
     throw new Error('The Django server could not complete this request. Please try again.');
   }

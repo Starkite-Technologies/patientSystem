@@ -1,6 +1,13 @@
 import { supabase } from './supabase';
 import { apiRequest } from './api';
-import { active, validateInput, type BoardData, type Resource, type Visit, type VisitInput } from '../model';
+import { active, validateInput, type BoardData, type HospitalContext, type Resource, type Visit, type VisitInput } from '../model';
+
+export const necmsEnabled = import.meta.env.VITE_NECMS_ENABLED === 'true';
+export function hospitalPath(path: string, context?: HospitalContext) {
+  if (!necmsEnabled) return path;
+  if (!context || context.purpose !== 'clinical') throw new Error('Select an authorised clinical hospital context.');
+  return `/necms/hospitals/${context.hospital_id}${path}`;
+}
 
 const STORAGE_KEY = 'patientflow-fictional-demo-v3';
 const now = Date.now();
@@ -53,14 +60,14 @@ function persist(data: BoardData) {
   window.dispatchEvent(new Event('patientflow-change'));
 }
 export function resetDemo() { persist(structuredClone(initial)); }
-export async function loadBoard(): Promise<BoardData> {
+export async function loadBoard(context?: HospitalContext): Promise<BoardData> {
   if (!supabase) return demoData();
-  return apiRequest<BoardData>('/board/');
+  return apiRequest<BoardData>(hospitalPath('/board/', context), 'GET', undefined, context?.id);
 }
-export async function saveVisit(input: VisitInput, existing?: Visit) {
+export async function saveVisit(input: VisitInput, existing?: Visit, context?: HospitalContext, requestId?: string) {
   validateInput(input);
   if (supabase) {
-    await apiRequest(existing ? `/visits/${existing.id}/` : '/visits/', existing ? 'PATCH' : 'POST', { input, ...(existing ? { version: existing.version, patient_version: existing.patient_version } : {}) });
+    await apiRequest(hospitalPath(existing ? `/visits/${existing.id}/` : '/visits/', context), existing ? 'PATCH' : 'POST', { input, ...(context && requestId ? { request_id: requestId } : {}), ...(existing ? { version: existing.version, patient_version: existing.patient_version } : {}) }, context?.id);
     return;
   }
   const data = demoData();
@@ -99,9 +106,9 @@ export async function saveVisit(input: VisitInput, existing?: Visit) {
   persist(data);
 }
 
-export async function setResourceState(resource: Resource, state: Resource['state']) {
+export async function setResourceState(resource: Resource, state: Resource['state'], context?: HospitalContext) {
   if (supabase) {
-    await apiRequest(`/resources/${resource.id}/`, 'PATCH', { state });
+    await apiRequest(hospitalPath(`/resources/${resource.id}/`, context), 'PATCH', { state }, context?.id);
     return;
   }
   const data = demoData();
