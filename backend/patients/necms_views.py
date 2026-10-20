@@ -29,7 +29,7 @@ def rpc(request, name, body=None, context=None):
                             body=body or {}, context=context)
 
 
-def hospital_context(request, hospital_id, capability=None, purpose='clinical'):
+def hospital_context(request, hospital_id, capability=None, purpose='clinical', required_capabilities=()):
     enabled()
     try:
         context = str(UUID(request.headers.get('X-NECMS-Context', '')))
@@ -40,6 +40,8 @@ def hospital_context(request, hospital_id, capability=None, purpose='clinical'):
         raise PermissionDenied('Hospital context does not match this operation.')
     if capability and capability not in info.get('capabilities', []):
         raise PermissionDenied('Hospital capability required.')
+    if any(cap not in info.get('capabilities', []) for cap in required_capabilities):
+        raise PermissionDenied('Companion hospital capabilities required.')
     return context
 
 

@@ -1,0 +1,113 @@
+-- Synthetic only. No clinical thresholds or automatic grants in the migration.
+reset role;
+update public.hospital_memberships set active=true,valid_until=null,authorization_version=authorization_version+1 where user_id='60000000-0000-0000-0000-000000000001';
+insert into public.resources(id,hospital_id,ownership_state,name,kind) values('a2000000-0000-0000-0000-000000000004','a0000000-0000-0000-0000-000000000001','verified','Synthetic arrival bay','Test');
+insert into public.departments(id,hospital_id,code,name) values
+ ('a3000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000001','TEST-ED','Synthetic ED'),
+ ('b3000000-0000-0000-0000-000000000001','b0000000-0000-0000-0000-000000000001','TEST-ED','Synthetic ED');
+-- Explicit fixture permissions only; no production role template is implied.
+insert into public.role_capabilities select r.id,c.code from public.hospital_roles r cross join public.capabilities c
+ where r.code<>'display' and c.code in ('arrival.register','identity.reconcile','triage.read','triage.create','triage.review','triage.reassess','priority.amend','protocol.admin','protocol.approve','clinical.timeline.read') on conflict do nothing;
+create function pg_temp.act(u uuid,h uuid) returns void language plpgsql as $$ begin
+ perform set_config('request.jwt.claim.sub',u::text,false);
+ perform set_config('request.headers',jsonb_build_object('x-necms-context',public.necms_create_context(h)->>'id')::text,false); end $$;
+create function pg_temp.assert_true(ok boolean,label text) returns void language plpgsql as $$ begin
+ if ok is distinct from true then raise exception 'Assertion failed: %',label; end if; end $$;
+set role authenticated;
+select pg_temp.act('60000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000001');
+select set_config('clinical.payload','{"request_id":"81000000-0000-0000-0000-000000000001","department_id":"a3000000-0000-0000-0000-000000000001","source":"ambulance","immediate_care":true}',false);
+select set_config('clinical.arrival',public.necms_record_arrival(current_setting('clinical.payload')::jsonb)::text,false);
+select set_config('clinical.visit',(current_setting('clinical.arrival')::jsonb->>'encounter_id'),false);
+select set_config('clinical.patient',(current_setting('clinical.arrival')::jsonb->>'patient_id'),false);
+select pg_temp.assert_true(public.necms_record_arrival(current_setting('clinical.payload')::jsonb)=current_setting('clinical.arrival')::jsonb,'arrival retry returns original');
+select pg_temp.expect_error(format('select public.necms_record_arrival(%L::jsonb)',current_setting('clinical.payload')::jsonb||'{"source":"referral"}'),'23514');
+select pg_temp.assert_true((select count(*)=1 from public.emergency_arrivals where encounter_id=current_setting('clinical.visit')::uuid),'one physical arrival');
+select pg_temp.assert_true((select status='in_treatment' and priority is null and triage_state='not_yet_triaged' and complaint is null from public.visits where id=current_setting('clinical.visit')::uuid),'care before identity and triage');
+select pg_temp.assert_true((select first_name is null and last_name is null and date_of_birth is null and identity_status='provisional' and temporary_identifier like 'TMP-%' from public.patients where id=current_setting('clinical.patient')::uuid),'no invented demographics');
+select pg_temp.assert_true((select arrived_at<=clock_timestamp() and actor_id=auth.uid() from public.emergency_arrivals where encounter_id=current_setting('clinical.visit')::uuid),'server arrival time/actor');
+select pg_temp.expect_error('select public.necms_record_arrival(''{"request_id":"81000000-0000-0000-0000-000000000002","department_id":"b3000000-0000-0000-0000-000000000001","source":"walk-in"}'')','23514');
+select set_config('clinical.assessment_payload','{"request_id":"82000000-0000-0000-0000-000000000001","kind":"initial","complaint":"Synthetic complaint","manual_priority":2,"observations":{"general":"Synthetic observation"},"vitals":[{"kind":"heart_rate","measurement_status":"unknown","unit":"bpm"},{"kind":"oxygen_saturation","measurement_status":"measured","unit":"%","value":98}]}',false);
+select set_config('clinical.assessment',public.necms_record_assessment(current_setting('clinical.visit')::uuid,1,current_setting('clinical.assessment_payload')::jsonb)::text,false);
+select pg_temp.assert_true(public.necms_record_assessment(current_setting('clinical.visit')::uuid,1,current_setting('clinical.assessment_payload')::jsonb)=current_setting('clinical.assessment')::uuid,'assessment retry');
+select pg_temp.assert_true((select triage_state='awaiting_review' and clinical_urgency is null and priority is null from public.visits where id=current_setting('clinical.visit')::uuid),'no urgency before review');
+select pg_temp.assert_true((select value is null from public.vital_observations where assessment_id=current_setting('clinical.assessment')::uuid and kind='heart_rate'),'unknown not zero');
+select pg_temp.expect_error(format('select public.necms_review_assessment(%L::uuid,2,''accepted'',''Synthetic review'')',current_setting('clinical.assessment')),'42501');
+select pg_temp.expect_error(format('select public.necms_record_assessment(%L::uuid,1,%L::jsonb)',current_setting('clinical.visit'),current_setting('clinical.assessment_payload')::jsonb||'{"request_id":"82000000-0000-0000-0000-000000000002","kind":"reassessment"}'),'P0001');
+select pg_temp.expect_error(format('select public.necms_record_assessment(%L::uuid,2,%L::jsonb)',current_setting('clinical.visit'),current_setting('clinical.assessment_payload')::jsonb||'{"request_id":"82000000-0000-0000-0000-000000000002","kind":"reassessment","vitals":[{"kind":"oxygen_saturation","measurement_status":"measured","unit":"%","value":101}]}'),'23514');
+select pg_temp.assert_true((select count(*)=1 from public.triage_assessments where encounter_id=current_setting('clinical.visit')::uuid),'invalid assessment rolled back');
+select pg_temp.act('60000000-0000-0000-0000-000000000002','a0000000-0000-0000-0000-000000000001');
+select public.necms_review_assessment(current_setting('clinical.assessment')::uuid,2,'accepted','Synthetic independent review; provisional only');
+select pg_temp.assert_true((select triage_state='completed_provisional' and clinical_urgency=2 and priority is null and latest_assessment_at is not null from public.visits where id=current_setting('clinical.visit')::uuid),'manual provisional urgency remains separate from legacy');
+select pg_temp.assert_true(jsonb_array_length(public.necms_assessment_history(current_setting('clinical.visit')::uuid))=1,'history read');
+select pg_temp.assert_true(jsonb_array_length(public.necms_clinical_timeline(current_setting('clinical.visit')::uuid))>=4,'clinical/administrative timeline');
+select public.necms_reconcile_identity(current_setting('clinical.patient')::uuid,1,'{"first_name":"Synthetic","last_name":"Arrival","date_of_birth":"2000-01-01","reason":"Synthetic identity confirmation"}');
+select pg_temp.assert_true((select identity_status='confirmed' and version=2 and temporary_identifier is not null from public.patients where id=current_setting('clinical.patient')::uuid),'identity completes without changing identifiers');
+select pg_temp.assert_true((select patient_id=current_setting('clinical.patient')::uuid from public.visits where id=current_setting('clinical.visit')::uuid),'original encounter/patient association');
+select pg_temp.expect_error(format('select public.necms_reconcile_identity(%L::uuid,1,''{"first_name":"Other","last_name":"Synthetic","date_of_birth":null,"reason":"Stale attempt"}'')',current_setting('clinical.patient')),'P0001');
+select set_config('clinical.reassessment',public.necms_record_assessment(current_setting('clinical.visit')::uuid,3,current_setting('clinical.assessment_payload')::jsonb||'{"request_id":"82000000-0000-0000-0000-000000000003","kind":"reassessment","manual_priority":1}')::text,false);
+select pg_temp.assert_true((select count(*)=2 from public.triage_assessments where encounter_id=current_setting('clinical.visit')::uuid),'separate reassessment');
+select set_config('clinical.protocol',public.necms_register_protocol('SYNTHETIC-NO-RULES','test-1')::text,false);
+select pg_temp.expect_error(format('select public.necms_record_assessment(%L::uuid,4,%L::jsonb)',current_setting('clinical.visit'),current_setting('clinical.assessment_payload')::jsonb||jsonb_build_object('request_id','82000000-0000-0000-0000-000000000004','kind','reassessment','protocol_version_id',current_setting('clinical.protocol'))),'42501');
+select pg_temp.act('60000000-0000-0000-0000-000000000002','b0000000-0000-0000-0000-000000000001');
+select pg_temp.assert_true((select count(*)=0 from public.emergency_arrivals where encounter_id=current_setting('clinical.visit')::uuid),'B cannot read A arrival');
+select pg_temp.assert_true((select count(*)=0 from public.triage_assessments where encounter_id=current_setting('clinical.visit')::uuid),'B cannot read A assessment');
+select pg_temp.expect_error(format('select public.necms_assessment_history(%L::uuid)',current_setting('clinical.visit')),'42501');
+select pg_temp.expect_error(format('select public.necms_record_assessment(%L::uuid,4,%L::jsonb)',current_setting('clinical.visit'),current_setting('clinical.assessment_payload')),'42501');
+reset role;
+select pg_temp.assert_true((select approval_status='draft' and activation_status='inactive' and approved_by is null from public.triage_protocol_versions where id=current_setting('clinical.protocol')::uuid),'draft is not clinically active');
+select pg_temp.expect_error(format('update public.triage_assessments set notes=''overwritten'' where id=%L::uuid',current_setting('clinical.assessment')),'42501');
+select pg_temp.expect_error(format('delete from public.emergency_arrivals where encounter_id=%L::uuid',current_setting('clinical.visit')),'42501');
+select pg_temp.assert_true((select actor_id is not null and hospital_id is not null from public.audit_events where action='physical_arrival' and visit_id=current_setting('clinical.visit')::uuid),'audit attribution');
+select pg_temp.assert_true((select count(*)=1 from public.identity_reconciliations where patient_id=current_setting('clinical.patient')::uuid),'reconciliation history');
+-- Composite FK and physical validation tested as owner; RLS is never disabled.
+select pg_temp.expect_error(format('insert into public.vital_observations(hospital_id,assessment_id,kind,measurement_status,unit,actor_id) values(''b0000000-0000-0000-0000-000000000001'',%L::uuid,''pain'',''unknown'',''score/10'',''60000000-0000-0000-0000-000000000001'')',current_setting('clinical.assessment')),'23503');
+update public.hospital_memberships set active=false,authorization_version=authorization_version+1 where user_id='60000000-0000-0000-0000-000000000002' and hospital_id='b0000000-0000-0000-0000-000000000001';
+set role authenticated;
+select pg_temp.expect_error('select public.necms_record_arrival(''{"request_id":"81000000-0000-0000-0000-000000000002","department_id":"b3000000-0000-0000-0000-000000000001","source":"walk-in"}'')','42501');
+select pg_temp.expect_error(format('select public.necms_record_assessment(%L::uuid,4,%L::jsonb)',current_setting('clinical.visit'),current_setting('clinical.assessment_payload')::jsonb||'{"kind":"reassessment"}'),'42501');
+select pg_temp.act('60000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000001');
+select pg_temp.expect_error('select public.necms_legacy_save_visit(''{}'')','42501');
+select pg_temp.expect_error('select public.necms_foundation_event(null,null,null,''forged'',''{}'')','42501');
+-- A second unknown arrival can receive a bed while still not triaged.
+select set_config('clinical.second',public.necms_record_arrival('{"request_id":"81000000-0000-0000-0000-000000000003","department_id":"a3000000-0000-0000-0000-000000000001","source":"walk-in"}')::text,false);
+select public.necms_update_care((current_setting('clinical.second')::jsonb->>'encounter_id')::uuid,1,'{"status":"in_treatment","next_action":"treatment","resource_id":"a2000000-0000-0000-0000-000000000004","assigned_to":"Synthetic clinician","location":""}');
+select pg_temp.assert_true((select priority is null and triage_state='not_yet_triaged' and resource_id is not null and status='in_treatment' from public.visits where id=(current_setting('clinical.second')::jsonb->>'encounter_id')::uuid),'bed before triage/identity completion');
+select pg_temp.expect_error(format('select public.necms_update_care(%L::uuid,1,''{"status":"waiting","next_action":"assessment","resource_id":null}'')',current_setting('clinical.second')::jsonb->>'encounter_id'),'P0001');
+select pg_temp.expect_error(format('select public.necms_update_care(%L::uuid,2,''{"status":"in_treatment","next_action":"treatment","resource_id":"b2000000-0000-0000-0000-000000000001"}'')',current_setting('clinical.second')::jsonb->>'encounter_id'),'P0001');
+select pg_temp.expect_error(format('select public.necms_reconcile_identity(%L::uuid,1,''{"first_name":"Synthetic","last_name":"Arrival","date_of_birth":"2000-01-01","reason":"Synthetic duplicate probe"}'')',current_setting('clinical.second')::jsonb->>'patient_id'),'23514');
+select pg_temp.assert_true((select identity_status='provisional' from public.patients where id=(current_setting('clinical.second')::jsonb->>'patient_id')::uuid),'duplicate completion blocked without merge');
+select pg_temp.expect_error(format('select public.save_visit(%L::jsonb)',jsonb_build_object('patient_ref',(select patient_ref from public.patients where id=(current_setting('clinical.second')::jsonb->>'patient_id')::uuid),'first_name','Synthetic','last_name','Bypass')),'42501');
+select set_config('clinical.normal_payload','{"first_name":"Synthetic","last_name":"Normal registration","date_of_birth":null,"complaint":"Synthetic compatibility check","priority":3,"status":"waiting","next_action":"assessment","location":"","resource_id":null,"assigned_to":"","notes":""}',false);
+select set_config('clinical.normal',public.save_visit(current_setting('clinical.normal_payload')::jsonb)::text,false);
+select pg_temp.assert_true((select priority=3 and triage_state='legacy_unassessed' from public.visits where id=current_setting('clinical.normal')::uuid),'normal registration compatibility');
+reset role;
+delete from public.role_capabilities where role_id='a1000000-0000-0000-0000-000000000001' and capability='priority.amend';
+set role authenticated;
+select pg_temp.expect_error(format('select public.save_visit(%L::jsonb,%L::uuid,1,1)',current_setting('clinical.normal_payload')::jsonb||'{"priority":1}',current_setting('clinical.normal')),'42501');
+select public.save_visit(current_setting('clinical.normal_payload')::jsonb||'{"status":"observation"}',current_setting('clinical.normal')::uuid,1,1);
+select pg_temp.assert_true((select priority=3 and status='observation' from public.visits where id=current_setting('clinical.normal')::uuid),'legacy editor cannot amend urgency but can update care');
+select pg_temp.assert_true(exists(select 1 from jsonb_array_elements(public.necms_clinical_timeline(current_setting('clinical.normal')::uuid)) e where e->>'action'='encounter_status_changed' and e->'details'->>'current_status'='observation'),'timeline exposes controlled status transition');
+select pg_temp.expect_error(format('select public.necms_review_assessment(%L::uuid,4,''accepted'',''Synthetic priority amendment'')',current_setting('clinical.reassessment')),'42501');
+reset role;
+insert into public.role_capabilities values('a1000000-0000-0000-0000-000000000001','priority.amend');
+set role authenticated;
+select public.necms_review_assessment(current_setting('clinical.reassessment')::uuid,4,'accepted','Synthetic independent reassessment review');
+select pg_temp.assert_true((select clinical_urgency=1 and priority is null and version=5 from public.visits where id=current_setting('clinical.visit')::uuid),'authorised manual priority amendment');
+reset role;
+create function pg_temp.reject_assessment_audit() returns trigger language plpgsql as $$ begin
+ if new.action='reassessment_recorded' then raise exception 'Synthetic audit failure' using errcode='23514'; end if; return new; end $$;
+create trigger synthetic_assessment_audit before insert on public.audit_events for each row execute function pg_temp.reject_assessment_audit();
+set role authenticated;
+select pg_temp.expect_error(format('select public.necms_record_assessment(%L::uuid,5,%L::jsonb)',current_setting('clinical.visit'),current_setting('clinical.assessment_payload')::jsonb||'{"request_id":"82000000-0000-0000-0000-000000000005","kind":"reassessment"}'),'23514');
+select pg_temp.assert_true((select count(*)=2 from public.triage_assessments where encounter_id=current_setting('clinical.visit')::uuid),'assessment rolls back if audit fails');
+select pg_temp.assert_true((select version=5 from public.visits where id=current_setting('clinical.visit')::uuid),'audit failure leaves encounter unchanged');
+select pg_temp.assert_true(not exists(select 1 from jsonb_array_elements(public.necms_clinical_timeline(current_setting('clinical.visit')::uuid)) e where e->'details' ? 'notes' or e->'details' ? 'complaint'),'timeline does not expose raw audit snapshots');
+reset role;
+drop trigger synthetic_assessment_audit on public.audit_events;
+select pg_temp.assert_true((select count(*)=0 from public.role_capabilities rc join public.hospital_roles r on r.id=rc.role_id where r.code='display' and rc.capability='triage.create'),'display not upgraded');
+select pg_temp.assert_true((select count(*)>0 from public.visits where triage_state='legacy_unassessed'),'legacy has no fabricated assessment');
+select pg_temp.assert_true((select count(*)=0 from public.patients where hospital_id is null and identity_status<>'confirmed'),'unresolved ownership not assigned');
+set role anon;
+select pg_temp.expect_error('select public.necms_record_arrival(''{}'')','42501');
+select pg_temp.expect_error(format('select public.necms_assessment_history(%L::uuid)',current_setting('clinical.visit')),'42501');
+reset role;

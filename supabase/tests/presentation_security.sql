@@ -1,0 +1,20 @@
+-- Executed only after synthetic coordination/bounded-read fixtures.
+reset role;
+update public.hospital_memberships set active=true,valid_until=null,authorization_version=authorization_version+1 where user_id='60000000-0000-0000-0000-000000000001';
+set role authenticated;
+select pg_temp.act('60000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000001');
+select pg_temp.assert_true(not has_column_privilege('authenticated','public.audit_events','before_record','select'),'direct REST cannot select before snapshots');
+select pg_temp.assert_true(not has_column_privilege('authenticated','public.audit_events','after_record','select'),'direct REST cannot select after snapshots');
+select pg_temp.expect_error('select before_record from public.audit_events where false','42501');
+select pg_temp.expect_error('select after_record from public.audit_events where false','42501');
+select pg_temp.expect_error('select * from public.audit_events where false','42501');
+select pg_temp.assert_true((public.necms_read_page('queue')->'summary') ?& array['reviewed_patients','waiting_service_patients','underway_services','pending_exceptions'],'new full-scope summary fields exist');
+select pg_temp.assert_true((public.necms_read_page('queue','{"q":"NO-SYNTHETIC-MATCH"}')->'summary')=(public.necms_read_page('queue')->'summary'),'empty filtered page preserves complete summaries');
+select pg_temp.assert_true(not exists(select 1 from jsonb_array_elements(public.necms_read_page('audit')->'items') r where r ?| array['before_record','after_record','notes','date_of_birth']),'bounded audit projection excludes restricted fields');
+reset role;
+delete from public.role_capabilities where role_id='a1000000-0000-0000-0000-000000000001' and capability='exception.review';
+set role authenticated;
+select pg_temp.assert_true(public.necms_read_page('queue')#>'{summary,pending_exceptions}'='null'::jsonb,'exception counts require exception permission');
+select pg_temp.expect_error('select public.necms_staff()','42501');
+reset role;
+insert into public.role_capabilities values('a1000000-0000-0000-0000-000000000001','exception.review');

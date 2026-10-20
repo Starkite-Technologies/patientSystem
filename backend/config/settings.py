@@ -18,7 +18,7 @@ if not SECRET_KEY:
         raise ImproperlyConfigured('Set DJANGO_SECRET_KEY, or use DJANGO_DEBUG=true for local development.')
 ALLOWED_HOSTS = [h.strip() for h in os.getenv('DJANGO_ALLOWED_HOSTS', 'localhost,127.0.0.1,testserver').split(',') if h.strip()]
 INSTALLED_APPS = ['rest_framework', 'patients']
-MIDDLEWARE = ['django.middleware.security.SecurityMiddleware', 'django.middleware.common.CommonMiddleware']
+MIDDLEWARE = ['django.middleware.security.SecurityMiddleware', 'patients.middleware.ClinicalCacheControl', 'django.middleware.common.CommonMiddleware']
 ROOT_URLCONF = 'config.urls'
 WSGI_APPLICATION = 'config.wsgi.application'
 # Existing application tables remain owned by the Supabase SQL migrations.
@@ -43,7 +43,8 @@ SUPABASE_URL = SUPABASE_URL.rstrip('/')
 SUPABASE_PUBLISHABLE_KEY = os.getenv('SUPABASE_PUBLISHABLE_KEY') or os.getenv('VITE_SUPABASE_PUBLISHABLE_KEY', '')
 if SUPABASE_URL and urlparse(SUPABASE_URL).scheme != 'https':
     raise ImproperlyConfigured('SUPABASE_URL must be an HTTPS project URL.')
-if SUPABASE_PUBLISHABLE_KEY.startswith('sb_secret_'):
+from patients.key_safety import public_key_allowed
+if not public_key_allowed(SUPABASE_PUBLISHABLE_KEY):
     raise ImproperlyConfigured('Use a publishable key for the user-scoped Supabase gateway.')
 SECURE_CONTENT_TYPE_NOSNIFF = True
 SECURE_SSL_REDIRECT = os.getenv('DJANGO_SECURE_SSL_REDIRECT', 'false').lower() == 'true'

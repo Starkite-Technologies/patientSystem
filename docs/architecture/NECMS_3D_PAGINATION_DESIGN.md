@@ -1,0 +1,13 @@
+# 3D bounded read contract
+
+2026-10-19. Additive APIs; existing mutation/RLS/history contracts retained. No hosted execution.
+
+Opaque database cursor UUIDs bind authenticated user, hospital context, endpoint kind, canonical filter hash, page size, revision and offset. Two-minute expiry. Offset pagination is safe only while the revision is unchanged; each continuation rechecks authorisation and revision. Deterministic ordering always ends in stable IDs. Changed/expired/foreign-context cursors fail explicitly; UI clears obsolete pages and returns to the first page with a notice. This is conservative reconciliation, not a frozen clinical snapshot. Summary counts are exact across the full hospital/department scope and independent of search/service/urgency/page filters. An empty page never means nobody else is waiting.
+
+Before/after revision checks detect changes during volatile read execution without locking clinical rows. Revisions include encounter/work/resource/identity/history/configuration evidence. Poll the current bounded queue page every five seconds, never the entire history. Histories refresh on selection or explicit refresh/mutation, with clear continuation controls. Each page is bounded to 50 (default 25); event snapshots/exception annotations have separate bounded pages rather than embedding arbitrarily large JSON. No raw realtime or offline writes.
+
+Patient search is hospital/capability checked, explicit and ambiguity preserving. Department filters narrow existing hospital access, not a new department-authorisation model. Public/restricted display stays on its separate server projection. Catalogues/staff/team selection are independently paged; selection of a name never mutates a clinical record. Existing legacy read routes remain for compatibility and are identified as residual unbounded interfaces, not the new polling path.
+
+Django and SQL independently require companion permissions for identity-bearing collections, including queue/encounter/identity read for exception review and annotations. The workspace also checks identity and resource read. Display contexts cannot use these clinical collections. Expired own cursor cleanup is bounded; no public cursor table grants exist. Revision/count computation still scans hospital scope and is not a constant-time change feed.
+
+Outstanding polls are coalesced. A last confirmation older than 15 seconds is technically stale even if transport has not failed; this does not establish any clinical deadline. Compatibility mode is explicit (`VITE_NECMS_PAGED_READS=false`), with no automatic unbounded fallback after an error. Global operational reviews are separately paginated so records outside the queue page remain discoverable.

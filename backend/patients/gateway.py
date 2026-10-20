@@ -46,6 +46,8 @@ def request_supabase(method, path, token, *, params=None, body=None, context=Non
         message = data.get('message', '') if isinstance(data, dict) else ''
         if code in ('PGRST205', 'PGRST202', '42P01', '42703', '42883'):
             raise UpstreamUnavailable('Apply the PatientFlow Supabase migration before using the board.')
+        if code in ('40001','40P01','55P03'):
+            raise WorkflowConflict('The coordination record changed or is busy. Refresh before retrying.')
         if code == '23505':
             raise WorkflowConflict('The patient reference or assigned space is already in use.')
         if code == '42501':

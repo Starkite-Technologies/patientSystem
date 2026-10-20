@@ -39,6 +39,16 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'In-memory database checks failed.' }
     & npm.cmd run test:hospitals
     if ($LASTEXITCODE -ne 0) { throw 'Hospital isolation database checks failed.' }
+    & node scripts/check-clinical-database.mjs
+    if ($LASTEXITCODE -ne 0) { throw 'Clinical foundation database checks failed.' }
+    & node scripts/check-coordination-database.mjs
+    if ($LASTEXITCODE -ne 0) { throw 'Coordination database checks failed.' }
+    & node scripts/check-readiness-database.mjs
+    if ($LASTEXITCODE -ne 0) { throw 'Readiness hardening and synthetic performance checks failed.' }
+    & node scripts/check-bounded-database.mjs
+    if ($LASTEXITCODE -ne 0) { throw 'Bounded-read paging and security checks failed.' }
+    & node scripts/check-presentation-database.mjs
+    if ($LASTEXITCODE -ne 0) { throw 'Presentation summary and privacy checks failed.' }
     Write-Output 'Isolated baseline checks passed. Hosted values were not used.'
 } finally {
     foreach ($taskVariableName in $taskVariableNames) {

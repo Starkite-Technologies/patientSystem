@@ -60,9 +60,10 @@ function persist(data: BoardData) {
   window.dispatchEvent(new Event('patientflow-change'));
 }
 export function resetDemo() { persist(structuredClone(initial)); }
-export async function loadBoard(context?: HospitalContext, signal?: AbortSignal): Promise<BoardData> {
+export async function loadBoard(context?: HospitalContext, signal?: AbortSignal, page?: {q:string;cursor:string|null;closed:boolean}): Promise<BoardData> {
   if (!supabase) return demoData();
-  return apiRequest<BoardData>(hospitalPath('/board/', context), 'GET', undefined, context?.id, signal);
+  const query=new URLSearchParams();if(page?.q)query.set('q',page.q);if(page?.cursor)query.set('cursor',page.cursor);if(page?.closed)query.set('closed','true');
+  return apiRequest<BoardData>(hospitalPath(context&&import.meta.env.VITE_NECMS_PAGED_READS!=='false'?`/workspace/?${query}`:'/board/', context), 'GET', undefined, context?.id, signal);
 }
 export async function saveVisit(input: VisitInput, existing?: Visit, context?: HospitalContext, requestId?: string, signal?: AbortSignal) {
   validateInput(input);
@@ -81,9 +82,9 @@ export async function saveVisit(input: VisitInput, existing?: Visit, context?: H
   const timestamp = new Date().toISOString();
   const visit: Visit = { ...input, id: existing?.id ?? crypto.randomUUID(), arrived_at: existing?.arrived_at ?? timestamp, updated_at: timestamp, version: (existing?.version ?? 0) + 1, patient_id: existing?.patient_id ?? crypto.randomUUID(), patient_version: existing?.patient_version ?? 1, names_need_review: false };
   visit.patient_ref = visit.patient_ref.trim();
-  visit.first_name = visit.first_name.trim();
-  visit.last_name = visit.last_name.trim();
-  visit.complaint = visit.complaint.trim();
+  visit.first_name = input.first_name.trim();
+  visit.last_name = input.last_name.trim();
+  visit.complaint = input.complaint.trim();
   if (active(visit) && data.visits.some(v => v.id !== visit.id && active(v) && v.patient_ref.trim().toLowerCase() === visit.patient_ref.toLowerCase())) throw new Error('This patient reference already has an active visit.');
   if (!active(visit)) visit.resource_id = null;
   if (visit.resource_id) {

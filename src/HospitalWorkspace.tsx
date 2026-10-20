@@ -61,17 +61,34 @@ function RestrictedDisplay({ context }: { context: HospitalContext }) {
     <tbody>{rows.map(row => <tr key={row.display_label}><td>{row.display_label}</td><td>{row.status}</td><td>{row.next_action}</td><td>{row.space_state}</td></tr>)}</tbody></table></main>;
 }
 
-export function HospitalStaff({ context }: { context: HospitalContext }) {
+export function HospitalStaff({ context, requests, onAccessDenied }: { context: HospitalContext; requests: ProtectedRequests; onAccessDenied: (message: string) => void }) {
   const [data, setData] = useState<{ memberships: { id: string; user_id: string; role_id: string; active: boolean }[]; roles: { id: string; code: string }[] } | null>(null);
   const [error, setError] = useState('');
   const [reason, setReason] = useState('');
-  useEffect(() => { let alive = true; apiRequest<typeof data>(`/necms/hospitals/${context.hospital_id}/staff/`, 'GET', undefined, context.id)
-    .then(next => { if (alive) setData(next); }).catch(error => { if (alive) setError(error.message); }); return () => { alive = false; }; }, [context]);
-  async function revoke(member: NonNullable<typeof data>['memberships'][number]) {
+  const gate = useMemo(() => new ProtectedRequests(), []);
+  async function perform<T>(method = 'GET', body?: unknown) {
+    const local = gate.begin(), parent = requests.begin();
+    if (!local || !parent) { if (local) gate.finish(local); if (parent) requests.finish(parent); return; }
     try {
-      await apiRequest(`/necms/hospitals/${context.hospital_id}/staff/`, 'POST', { user_id: member.user_id, role_id: member.role_id, active: false, reason }, context.id);
-      setData(previous => previous && ({ ...previous, memberships: previous.memberships.map(m => m.id === member.id ? { ...m, active: false } : m) })); setError('');
-    } catch (error) { setError(error instanceof Error ? error.message : 'Change denied.'); }
+      const result = await apiRequest<T>(`/necms/hospitals/${context.hospital_id}/staff/`, method, body, context.id, AbortSignal.any([local.controller.signal, parent.controller.signal]));
+      if (requests.current(parent) && (method === 'GET' ? gate.accept(local) : gate.current(local))) return result;
+    } catch (failure) {
+      if (!gate.current(local) || !requests.current(parent)) return;
+      const message = failure instanceof Error ? failure.message : 'Staff access unavailable.';
+      if (failure instanceof ApiError && [401,403].includes(failure.status)) {
+        gate.deny(local); setData(null);
+        if (requests.deny(parent)) onAccessDenied(message);
+      } else if (gate.accept(local)) { setData(null); setError(message); }
+    } finally { gate.finish(local); requests.finish(parent); }
+  }
+  async function refreshStaff() { const next = await perform<typeof data>(); if (next) { setData(next); setError(''); } }
+  useEffect(() => {
+    gate.activate(); const initial = setTimeout(() => void refreshStaff(), 0), timer = setInterval(() => void refreshStaff(), 5000);
+    return () => { gate.close(); clearTimeout(initial); clearInterval(timer); };
+  }, [context.id]);
+  async function revoke(member: NonNullable<typeof data>['memberships'][number]) {
+    const result = await perform('POST', { user_id: member.user_id, role_id: member.role_id, active: false, reason });
+    if (result) await refreshStaff();
   }
   return <section className="activity-panel"><h2>Hospital staff access</h2>{error && <p role="alert">{error}</p>}
     <label>Reason for access change<input value={reason} maxLength={300} onChange={event => setReason(event.target.value)} /></label>
