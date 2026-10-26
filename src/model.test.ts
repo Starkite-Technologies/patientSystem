@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ageAtDate, hospitalDate, canEditVisits, canManageResources, compareVisits, fullName, queuePosition, validateInput, waitLabel, type Visit } from './model';
+import { ageAtDate, hospitalDate, canEditVisits, canManageResources, compareVisits, formatMinutes, fullName, minutesOverdue, priorities, queuePosition, triageCategories, validateInput, waitLabel, type Visit } from './model';
 
 describe('date of birth and derived age', () => {
   it('changes age on the birthday, not on January 1', () => {
@@ -81,5 +81,34 @@ describe('registration validation', () => {
   it('formats elapsed time without negative waits', () => {
     expect(waitLabel('2026-10-13T10:00:00Z', Date.parse('2026-10-13T11:35:00Z'))).toBe('1h 35m');
     expect(waitLabel('2026-10-13T10:00:00Z', Date.parse('2026-10-13T09:00:00Z'))).toBe('0m');
+  });
+});
+describe('Manchester triage display', () => {
+  const at = (minutes: number) => Date.parse('2026-10-13T10:00:00Z') + minutes * 60000;
+  it('labels P1–P5 with colour name and category, not colour alone', () => {
+    expect(priorities).toEqual(['P1 · Red – Immediate', 'P2 · Orange – Very urgent', 'P3 · Yellow – Urgent', 'P4 · Green – Standard', 'P5 · Blue – Non-urgent']);
+    expect(triageCategories.map(c => c.targetMinutes)).toEqual([0, 10, 60, 120, 240]);
+  });
+  it('sorts red first through blue', () => {
+    const visits = [make('blue', 5), make('yellow', 3), make('red', 1), make('green', 4), make('orange', 2)];
+    expect([...visits].sort(compareVisits).map(v => v.id)).toEqual(['red', 'orange', 'yellow', 'green', 'blue']);
+  });
+  it('flags waiting patients only once past their category target', () => {
+    expect(minutesOverdue(make('red', 1), at(0))).toBeNull();
+    expect(minutesOverdue(make('red', 1), at(1))).toBe(1);
+    expect(minutesOverdue(make('orange', 2), at(10))).toBeNull();
+    expect(minutesOverdue(make('orange', 2), at(11))).toBe(1);
+    expect(minutesOverdue(make('yellow', 3, 'assessment', 'ready'), at(85))).toBe(25);
+    expect(minutesOverdue(make('green', 4), at(120))).toBeNull();
+    expect(minutesOverdue(make('blue', 5), at(300))).toBe(60);
+  });
+  it('does not flag patients already being seen or discharged', () => {
+    expect(minutesOverdue(make('a', 1, 'assessment', 'in_treatment'), at(90))).toBeNull();
+    expect(minutesOverdue(make('b', 2, 'assessment', 'discharged'), at(90))).toBeNull();
+    expect(minutesOverdue({ ...make('c', 1), priority: null }, at(90))).toBeNull();
+  });
+  it('formats overdue durations', () => {
+    expect(formatMinutes(25)).toBe('25m');
+    expect(formatMinutes(125)).toBe('2h 5m');
   });
 });

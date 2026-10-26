@@ -45,11 +45,11 @@
 .footer-buttons { display: flex; align-items: center; gap: 10px; }
 .visit-dialog .primary, .visit-dialog .secondary { font-size: 12px; padding: 12px 18px; min-height: 44px; border-radius: 8px; }
 .dialog-error { font-size: 12px; margin-bottom: 13px; max-height: 80px; overflow-y: auto; }
-.priority-select.priority-border-1 { border-left: 4px solid #c45050 !important; }
-.priority-select.priority-border-2 { border-left: 4px solid #ca8841 !important; }
-.priority-select.priority-border-3 { border-left: 4px solid #b99b38 !important; }
-.priority-select.priority-border-4 { border-left: 4px solid #4b9474 !important; }
-.priority-select.priority-border-5 { border-left: 4px solid #5f8fb8 !important; }
+.priority-select.priority-border-1 { border-left: 6px solid #c62828 !important; }
+.priority-select.priority-border-2 { border-left: 6px solid #f57c00 !important; }
+.priority-select.priority-border-3 { border-left: 6px solid #fdd835 !important; }
+.priority-select.priority-border-4 { border-left: 6px solid #2e7d32 !important; }
+.priority-select.priority-border-5 { border-left: 6px solid #1565c0 !important; }
 @media (max-width: 600px) {
   .visit-dialog { width: calc(100vw - 20px); height: calc(100dvh - 28px); max-height: calc(100dvh - 28px); border-radius: 14px; }
   .visit-dialog .dialog-heading { padding: 19px 17px; gap: 10px; }

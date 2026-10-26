@@ -1,4 +1,12 @@
-export const priorities = ['P1 · Highest (legacy/unvalidated)', 'P2 · High (legacy/unvalidated)', 'P3 · Moderate (legacy/unvalidated)', 'P4 · Lower (legacy/unvalidated)', 'P5 · Lowest (legacy/unvalidated)'];
+// Manchester Triage System categories. Database values stay P1–P5 (1–5).
+export const triageCategories = [
+  { colour: 'Red', label: 'Immediate', target: 'Seen at once', targetMinutes: 0 },
+  { colour: 'Orange', label: 'Very urgent', target: 'Within 10 min', targetMinutes: 10 },
+  { colour: 'Yellow', label: 'Urgent', target: 'Within 60 min', targetMinutes: 60 },
+  { colour: 'Green', label: 'Standard', target: 'Within 120 min', targetMinutes: 120 },
+  { colour: 'Blue', label: 'Non-urgent', target: 'Within 240 min', targetMinutes: 240 },
+] as const;
+export const priorities = triageCategories.map((c, i) => `P${i + 1} · ${c.colour} – ${c.label}`);
 export const statuses = {
   waiting: 'Waiting', ready: 'Ready', in_treatment: 'In treatment',
   awaiting_results: 'Awaiting results', observation: 'Observation',
@@ -41,8 +49,19 @@ export function queuePosition(visit: Visit, visits: Visit[]) {
   return index < 0 ? null : index + 1;
 }
 export function waitLabel(arrival: string, now = Date.now()) {
-  const minutes = Math.max(0, Math.floor((now - Date.parse(arrival)) / 60000));
+  return formatMinutes(Math.max(0, Math.floor((now - Date.parse(arrival)) / 60000)));
+}
+export function formatMinutes(minutes: number) {
   return minutes < 60 ? `${minutes}m` : `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
+// Minutes past the category target for a patient not yet seen (waiting/ready); otherwise null.
+export function minutesOverdue(visit: Visit, now = Date.now()) {
+  const priority = displayedPriority(visit);
+  if (priority === null || !['waiting', 'ready'].includes(visit.status)) return null;
+  const category = triageCategories[priority - 1];
+  if (!category) return null;
+  const over = Math.floor((now - Date.parse(visit.arrived_at)) / 60000) - category.targetMinutes;
+  return over > 0 ? over : null;
 }
 export function validateInput<T extends Pick<Visit, 'first_name' | 'last_name' | 'complaint' | 'priority' | 'date_of_birth'>>(input: T) {
   if (!input.first_name?.trim() || !input.last_name?.trim() || !input.complaint?.trim()) throw new Error('First name, last name, and presenting complaint are required.');
