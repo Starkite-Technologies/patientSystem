@@ -1,6 +1,5 @@
 import os
 from pathlib import Path
-from urllib.parse import urlparse
 
 from django.core.exceptions import ImproperlyConfigured
 from dotenv import load_dotenv
@@ -41,9 +40,9 @@ REST_FRAMEWORK = {
 SUPABASE_URL = os.getenv('SUPABASE_URL') or os.getenv('VITE_SUPABASE_URL', '')
 SUPABASE_URL = SUPABASE_URL.rstrip('/')
 SUPABASE_PUBLISHABLE_KEY = os.getenv('SUPABASE_PUBLISHABLE_KEY') or os.getenv('VITE_SUPABASE_PUBLISHABLE_KEY', '')
-if SUPABASE_URL and urlparse(SUPABASE_URL).scheme != 'https':
-    raise ImproperlyConfigured('SUPABASE_URL must be an HTTPS project URL.')
-from patients.key_safety import public_key_allowed
+from patients.key_safety import public_key_allowed, supabase_url_allowed
+if SUPABASE_URL and not supabase_url_allowed(SUPABASE_URL):
+    raise ImproperlyConfigured('SUPABASE_URL must be an HTTPS project URL, or http://127.0.0.1:<port> for a local self-hosted gateway.')
 if not public_key_allowed(SUPABASE_PUBLISHABLE_KEY):
     raise ImproperlyConfigured('Use a publishable key for the user-scoped Supabase gateway.')
 SECURE_CONTENT_TYPE_NOSNIFF = True

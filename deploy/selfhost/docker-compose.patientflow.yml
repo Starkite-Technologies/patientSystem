@@ -1,0 +1,19 @@
+# PatientFlow overrides for Supabase's official self-hosted compose (see deploy/selfhost/README.md).
+# Run only the services PatientFlow needs:
+#   docker compose -f <upstream>/docker-compose.yml -f deploy/selfhost/docker-compose.patientflow.yml \
+#     --env-file <upstream>/.env up -d db auth rest realtime meta studio api-gw
+# Not started: storage, imgproxy, functions, supavisor (which publishes Postgres on host ports 5432/6543).
+services:
+  api-gw:
+    # Gateway (Auth, Data API, Realtime, Studio) reachable from this machine only.
+    ports: !override
+      - "127.0.0.1:${API_GW_HTTP_PORT:-8100}:8000/tcp"
+
+  db:
+    volumes:
+      # Docker-managed volume instead of ./volumes/db/data, so database files are
+      # never inside a synced folder (OneDrive) and survive upstream file updates.
+      - patientflow-db-data:/var/lib/postgresql/data
+
+volumes:
+  patientflow-db-data:
