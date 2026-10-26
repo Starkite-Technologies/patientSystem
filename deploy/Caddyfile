@@ -1,0 +1,31 @@
+# PatientFlow pilot: one origin, automatic HTTPS (Let's Encrypt).
+# Replace pilot.example.com and YOUR_PROJECT before use.
+pilot.example.com {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "same-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://YOUR_PROJECT.supabase.co wss://YOUR_PROJECT.supabase.co; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
+		-Server
+	}
+
+	# Django API (gunicorn on loopback only).
+	handle /api/* {
+		reverse_proxy 127.0.0.1:8000
+	}
+
+	# Built frontend. Hashed assets are immutable; index.html is never cached.
+	handle {
+		root * /opt/patientflow/dist
+		@assets path /assets/*
+		header @assets Cache-Control "public, max-age=31536000, immutable"
+		@html not path /assets/*
+		header @html Cache-Control "no-store"
+		try_files {path} /index.html
+		file_server
+	}
+}
