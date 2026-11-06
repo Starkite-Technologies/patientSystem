@@ -33,7 +33,8 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Frontend tests failed.' }
     & .\.venv\Scripts\python.exe backend\manage.py test patients --verbosity 1
     if ($LASTEXITCODE -ne 0) { throw 'Django tests failed.' }
-    & npm.cmd run build
+    # Never replace dist: a running pilot preview may be serving it.
+    & npm.cmd run build -- --outDir test-results/isolated-build
     if ($LASTEXITCODE -ne 0) { throw 'TypeScript/Vite build failed.' }
     & npm.cmd run test:database
     if ($LASTEXITCODE -ne 0) { throw 'In-memory database checks failed.' }

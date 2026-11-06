@@ -18,7 +18,7 @@ export const actions = {
 } as const;
 export type Status = keyof typeof statuses;
 export type Action = keyof typeof actions;
-export type Role = 'clinician' | 'coordinator' | 'viewer' | 'nurse' | 'surgeon';
+export type Role = 'clinician' | 'coordinator' | 'viewer' | 'nurse' | 'surgeon' | 'anaesthetist';
 export const canEditVisits = (role: Role) => ['clinician', 'coordinator', 'nurse', 'surgeon'].includes(role);
 export const canManageResources = (role: Role) => ['nurse', 'coordinator'].includes(role);
 export interface Visit {

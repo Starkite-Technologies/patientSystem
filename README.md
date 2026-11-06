@@ -1,5 +1,10 @@
 # PatientFlow
 
+The current laptop pilot uses the **existing self-hosted Supabase stack**. Follow
+[the current pilot guide](deploy/PILOT_DEPLOYMENT.md). Do not create another project,
+apply migrations, restart the public app, or deploy changes without approval.
+Hosted-project setup below is for other installations, not this pilot.
+
 NECMS multi-hospital source changes are prepared behind disabled development flags.
 Read [the Milestone 2B report](docs/architecture/NECMS_2B_COMPLETION_REPORT.md) before enabling them.
 The new migration has only run in disposable tests; do not apply it to a hosted

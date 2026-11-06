@@ -29,7 +29,13 @@ try {
   await database.exec(await readFile(new URL('../supabase/tests/clinical_roles.sql', import.meta.url), 'utf8'));
   await database.exec(await readFile(new URL('../supabase/tests/date_of_birth.sql', import.meta.url), 'utf8'));
   await database.exec(await readFile(new URL('../supabase/tests/auto_references.sql', import.meta.url), 'utf8'));
-  console.log('Database checks passed: name migration, patient normalization, RLS, roles, audit, version checks, discharge, and resource conflicts.');
+  await database.exec(await readFile(new URL('../supabase/migrations/202610270001_pilot_export_audit.sql', import.meta.url), 'utf8'));
+  await database.exec(await readFile(new URL('../supabase/tests/export_audit.sql', import.meta.url), 'utf8'));
+  await database.exec(await readFile(new URL('../supabase/migrations/202610310001_pilot_theatre_list.sql', import.meta.url), 'utf8'));
+  await database.exec(await readFile(new URL('../supabase/tests/theatre.sql', import.meta.url), 'utf8'));
+  // The theatre migration replaces record_export; the original export rules must still hold.
+  await database.exec(await readFile(new URL('../supabase/tests/export_audit.sql', import.meta.url), 'utf8'));
+  console.log('Database checks passed: name migration, patient normalization, RLS, roles, audit, version checks, discharge, resource conflicts, export audit, and theatre list.');
 } finally {
   await database.close();
 }

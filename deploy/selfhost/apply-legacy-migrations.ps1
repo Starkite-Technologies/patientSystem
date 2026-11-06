@@ -1,5 +1,5 @@
-# Apply the six legacy PatientFlow migrations to the LOCAL self-hosted Supabase database (container supabase-db),
-# then run deploy/pilot-verify.sql. Never applies *necms* files.
+# Apply the pilot PatientFlow migrations (six legacy files + pilot export audit + theatre list) to the LOCAL self-hosted
+# Supabase database (container supabase-db), then run deploy/pilot-verify.sql. Never applies *necms* files.
 #   Preview (no changes):  powershell -NoProfile -ExecutionPolicy Bypass -File deploy\selfhost\apply-legacy-migrations.ps1
 #   Apply:                 ... -File deploy\selfhost\apply-legacy-migrations.ps1 -Apply
 # Each applied file is recorded (name + SHA-256) in public._patientflow_migrations, the same history table
@@ -13,7 +13,9 @@ $files = @(
     '202610140002_nurse_surgeon_roles.sql',
     '202610140003_nurse_coordination.sql',
     '202610140004_patient_date_of_birth.sql',
-    '202610140005_auto_patient_references.sql'
+    '202610140005_auto_patient_references.sql',
+    '202610270001_pilot_export_audit.sql',
+    '202610310001_pilot_theatre_list.sql'
 )
 function Fail($message) { Write-Host "STOPPED: $message" -ForegroundColor Red; exit 1 }
 function Sql($query) {
@@ -46,7 +48,10 @@ $pending = @()
 foreach ($name in $files) {
     $path = Join-Path $repo "supabase\migrations\$name"
     if (-not (Test-Path $path)) { Fail "Missing $name" }
-    $hash = (Get-FileHash $path -Algorithm SHA256).Hash.ToLower()
+    # .NET also works on installations without the Get-FileHash cmdlet.
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try { $hash = [BitConverter]::ToString($sha.ComputeHash([IO.File]::ReadAllBytes($path))).Replace('-', '').ToLower() }
+    finally { $sha.Dispose() }
     $recorded = if ($historyExists) { Sql "select checksum from public._patientflow_migrations where name='$name'" } else { '' }
     if ($recorded -and $recorded -ne $hash) { Fail "$name differs from its applied version." }
     if ($recorded) { Write-Host "Already applied: $name" } else { Write-Host "Pending:         $name  (sha256 $($hash.Substring(0,12))...)"; $pending += @{ name = $name; path = $path; hash = $hash } }

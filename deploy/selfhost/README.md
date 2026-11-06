@@ -10,7 +10,7 @@ first this laptop (fictional patients only), later a server in a Namibian data c
 | Upstream compose files | `C:\Users\alexs\patientflow-supabase\upstream\docker`, sparse clone of `github.com/supabase/supabase` at **`f4d6d9052788b70c7c712e552fe98b1af8649a73`** (2026-10-26) | Upstream repo, unmodified |
 | Stack secrets | `...\upstream\docker\.env` (generated: Postgres, JWT, anon/service keys, Studio login, encryption keys) | Ignored. **Outside OneDrive.** |
 | PatientFlow overrides | `deploy/selfhost/docker-compose.patientflow.yml` | Yes |
-| Migrations | `deploy/selfhost/apply-legacy-migrations.ps1` (six legacy files only) | Yes |
+| Migrations | `deploy/selfhost/apply-legacy-migrations.ps1` (six legacy files + pilot export audit + pilot theatre list; never NECMS) | Yes |
 | App config | `patientsystem/.env`: `VITE_SUPABASE_URL=same-origin`, `SUPABASE_URL=http://127.0.0.1:8100`, anon key | Ignored |
 
 The stack lives outside OneDrive on purpose: database files in a synced folder would be uploaded
@@ -39,7 +39,7 @@ Browser ──tunnel──> vite preview :4173 ── /api/*     ──> Django 
 2. `start.ps1 -StackOnly`: pulls images (~3 GB), starts the stack, checks the loopback binding and Auth settings.
 3. ⛔ **Approval required.** Preview, then apply migrations:
    `deploy\selfhost\apply-legacy-migrations.ps1` (lists pending files, changes nothing), then the same with `-Apply`.
-   It runs `deploy/pilot-verify.sql` at the end: 12 rows, all PASS.
+   It runs `deploy/pilot-verify.sql` at the end: 14 rows, all PASS.
 4. Studio → Authentication → Add user (auto-confirm) for each staff member; Studio → SQL editor → `staff_profiles` inserts
    (same SQL as `deploy/PILOT_DEPLOYMENT.md` Part A step 6).
 5. `start.ps1 -NoTunnel` for a local test at `http://localhost:4173`, then `start.ps1` for the tunnel link.
