@@ -66,8 +66,15 @@ try {
         }
         if (-not $connected) { Fail 'The named tunnel did not connect. See logs\cran-tunnel-error.log.' }
     } elseif ($stale.Count -gt 0) {
-        Write-Host "WARNING: the pilot's tunnel connector was started before $PublicHost was added to $tunnelConfig." -ForegroundColor Yellow
-        Write-Host "         It does not know the new hostname, so $PublicHost may answer 404 until the pilot is restarted once (start.ps1)." -ForegroundColor Yellow
+        $fresh = @($connectors | Where-Object { $_.CreationDate -ge $configTime })
+        Write-Host "WARNING: tunnel connector(s) $($stale.ProcessId -join ', ') started before $PublicHost was added to $tunnelConfig." -ForegroundColor Yellow
+        Write-Host "         Cloudflare can route $PublicHost to them, and they answer 404." -ForegroundColor Yellow
+        if ($fresh.Count -gt 0) {
+            Write-Host "         Connector(s) $($fresh.ProcessId -join ', ') already have the new rule for both hostnames. In an administrator PowerShell run:" -ForegroundColor Yellow
+            Write-Host "         Stop-Process -Id $($stale.ProcessId -join ',') -Force" -ForegroundColor Cyan
+        } else {
+            Write-Host "         Restart the pilot once (start.ps1, or the 'PatientFlow pilot' scheduled task) so its connector reloads the config." -ForegroundColor Yellow
+        }
     } else {
         Write-Host 'Using the running patientflow tunnel connector (it already serves this hostname).'
     }
