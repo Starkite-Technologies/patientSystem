@@ -1,4 +1,4 @@
-from django.urls import path
+from django.urls import include, path
 from patients import views
 from patients import necms_views as necms
 from patients import clinical_views as clinical
@@ -8,6 +8,7 @@ from patients import export_views
 from patients import theatre_views as theatre
 
 urlpatterns = [
+    path('', include('cran.urls')),
     path('api/necms/hospitals/<uuid:hospital_id>/read/<str:kind>/', paged.page),
     path('api/necms/hospitals/<uuid:hospital_id>/workspace/', paged.workspace),
     path('api/necms/hospitals/<uuid:hospital_id>/coordination/', coordination.board),
