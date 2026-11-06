@@ -12,7 +12,8 @@
     "test:hospitals": "node scripts/check-hospital-database.mjs",
     "test:browser": "node scripts/check-browser.mjs",
     "demo:cran": "node scripts/start-cran-demo.mjs",
-    "test:cran": "node scripts/test-cran.mjs"
+    "test:cran": "node scripts/test-cran.mjs",
+    "demo:cran:public": "node scripts/start-cran-demo.mjs --public"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.0.0",

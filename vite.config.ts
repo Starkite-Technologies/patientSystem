@@ -12,11 +12,14 @@ export default defineConfig(({ mode }) => {
   if (env.VITE_SUPABASE_URL === 'same-origin' && env.SUPABASE_URL) proxy['/auth/v1'] = { target: env.SUPABASE_URL, changeOrigin: true };
   // Public hostname served through the named tunnel; any other Host header is rejected (preview inherits this).
   const allowedHosts = env.PUBLIC_HOSTNAME ? [env.PUBLIC_HOSTNAME] : [];
+  // CRAN demo only: allow Cloudflare quick-tunnel links (npm run demo:cran:public).
+  if (env.VITE_CRAN_DEMO === 'true') allowedHosts.push('.trycloudflare.com');
   return {
     plugins: [react(), tailwindcss(), {
       name: 'cran-demo-entry',
       transformIndexHtml: { order: 'pre' as const, handler: (html: string) => env.VITE_CRAN_DEMO === 'true' ? html.replace('/src/main.tsx', '/src/cran/main.tsx').replace(/<title>.*<\/title>/, '<title>PatientFlow - CRAN demo</title>') : html },
     }],
+    preview: { proxy, allowedHosts },
     server: { proxy, allowedHosts, watch: { ignored: ['**/backend/**', '**/.venv/**', '**/logs/**'] } },
   };
 });

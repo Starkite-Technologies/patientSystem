@@ -43,3 +43,4 @@ htmlcov/
 
 # CRAN demo local store (synthetic, regenerated on reset)
 backend/.cran-data/
+dist-cran/
