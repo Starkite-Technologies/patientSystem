@@ -20,9 +20,9 @@ DETERIORATION_DELAY = 60
 FACILITY = 'PatientFlow Demo Emergency Department'
 
 PRACTITIONERS = {
-    'nurse': {'id': 'prac-nurse-01', 'given': 'Selma', 'family': 'Nakale', 'role': 'Registered nurse (triage)'},
-    'doctor': {'id': 'prac-doctor-01', 'given': 'Tuhafeni', 'family': 'Amutenya', 'role': 'Emergency medical officer'},
-    'supervisor': {'id': 'prac-super-01', 'given': 'Kaarina', 'family': 'Beukes', 'role': 'Nurse manager (supervisor)'},
+    'nurse': {'id': 'prac-nurse-01', 'given': 'Saara', 'family': 'Iita', 'role': 'Registered nurse (triage)'},
+    'doctor': {'id': 'prac-doctor-01', 'given': 'Tuhafeni', 'family': 'Iileka', 'role': 'Emergency medical officer'},
+    'supervisor': {'id': 'prac-super-01', 'given': 'Kaarina', 'family': 'Uugwanga', 'role': 'Nurse manager (supervisor)'},
 }
 MONITOR = {'id': 'prac-monitor', 'name': 'Bedside monitor (scripted demo)', 'role': 'system'}
 
@@ -34,9 +34,9 @@ V = lambda hr, rr, sbp, dbp, t, s, c='A', o2=False: {  # noqa: E731
 WAITING = [
     (1, 34, 1, 'in-progress', 'Motor vehicle collision, chest injury, short of breath', V(132, 30, 88, 54, 36.4, 89, 'V', True)),
     (2, 22, 2, 'triaged', 'Central chest pain radiating to left arm, 40 minutes', V(104, 20, 158, 96, 36.8, 96)),
-    (3, 48, 2, 'triaged', 'Wheeze and shortness of breath not settling with inhaler', V(112, 26, 132, 84, 36.9, 93)),
+    (3, 48, 2, 'triaged', 'Wheeze and shortness of breath not settling with inhaler', V(108, 24, 132, 84, 36.9, 94)),
     (4, 15, 3, 'triaged', 'Abdominal pain right lower quadrant since yesterday', V(98, 18, 126, 80, 38.1, 97)),
-    (5, 63, 3, 'triaged', 'Fever and vomiting for 2 days, unable to keep fluids down', V(126, 28, 98, 60, 38.7, 97)),
+    (5, 63, 3, 'triaged', 'Fever and vomiting for 2 days, unable to keep fluids down', V(108, 21, 112, 70, 38.7, 96)),
     (6, 9, 3, 'triaged', 'Deep laceration to forearm, bleeding controlled', V(92, 16, 136, 88, 36.6, 99)),
     (7, 95, 4, 'triaged', 'Painful swollen ankle after fall at soccer', V(78, 14, 128, 82, 36.7, 99)),
     (8, 71, 4, 'triaged', 'Burning urination for 3 days', V(84, 16, 122, 78, 37.6, 98)),
@@ -45,7 +45,7 @@ WAITING = [
     (11, 140, 5, 'triaged', 'Prescription renewal for chronic medication', V(72, 14, 134, 86, 36.6, 99)),
     (12, 155, 5, 'triaged', 'Rash on arms for one week, itchy', V(70, 14, 118, 76, 36.7, 99)),
 ]
-SCRIPTED = (13, 'Fever and productive cough for 3 days', V(96, 18, 124, 80, 38.2, 96), 3)
+SCRIPTED = (14, 'Fever and productive cough for 3 days', V(96, 18, 124, 80, 38.2, 96), 3)
 WORSENED = V(108, 22, 108, 70, 38.4, 94)  # NEWS2 2 -> 6: suggests P2 Orange
 
 
@@ -89,18 +89,20 @@ def build(now: datetime | None = None):
         if person['in_registry']:
             meta['registry'][pat['id']] = mpi.lookup(person['health_id'])
         start = now - timedelta(minutes=minutes_ago)
+        # Vitals and triage happen shortly after arrival, never in the future.
+        vitals_at, triaged_at = start + timedelta(minutes=min(3, minutes_ago / 3)), start + timedelta(minutes=min(4, minutes_ago / 2))
         enc = fhir.encounter(patient_id=pat['id'], practitioner_id=nurse['id'], start=iso(start), status='arrived')
         enc['serviceProvider'] = {'display': FACILITY}
         fhir.set_triage(enc, level)
-        fhir.set_status(enc, 'triaged', iso(start + timedelta(minutes=4)))
+        fhir.set_status(enc, 'triaged', iso(triaged_at))
         if status == 'in-progress':
-            fhir.set_status(enc, 'in-progress', iso(start + timedelta(minutes=6)))
+            fhir.set_status(enc, 'in-progress', iso(triaged_at + timedelta(minutes=2)))
         obs = fhir.vitals_observation(patient_id=pat['id'], encounter_id=enc['id'], vitals=vitals,
-                                      effective=iso(start + timedelta(minutes=3)), performer_id=nurse['id'])
+                                      effective=iso(vitals_at), performer_id=nurse['id'])
         cond = fhir.condition(patient_id=pat['id'], encounter_id=enc['id'], text=complaint, recorded=iso(start),
                               category='encounter-diagnosis')
         resources.extend([pat, enc, obs, cond])
-        records['decisions'].append({'id': f'seed-{enc["id"]}', 'created_at': iso(start + timedelta(minutes=4)), 'kind': 'triage',
+        records['decisions'].append({'id': f'seed-{enc["id"]}', 'created_at': iso(triaged_at), 'kind': 'triage',
                                      'encounter_id': enc['id'], 'suggestion_id': None, 'action': 'confirm', 'level': level,
                                      'user': nurse, 'note': 'Seeded demo decision'})
         return enc

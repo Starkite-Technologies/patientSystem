@@ -122,7 +122,7 @@ def rule_note(transcript: str) -> dict:
             mode = 'plan'
         elif mode == 'presenting_complaint' and any(w in low for w in FINDING_WORDS):
             mode = 'findings'
-        sections[mode].append(sentence)
+        sections[mode].append(re.sub(r'^(plan|findings|presenting complaint|complaint)\s*[:\-–]\s*', '', sentence, flags=re.IGNORECASE))
     return {k: ' '.join(v) if v else 'Not dictated.' for k, v in sections.items()}
 
 
@@ -164,7 +164,8 @@ def manual_sections() -> list[tuple[str, str]]:
 
 
 def _words(text: str) -> set[str]:
-    return {w for w in re.findall(r'[a-z0-9]+', text.lower()) if w not in STOP and len(w) > 1}
+    words = {w for w in re.findall(r'[a-z0-9]+', text.lower()) if w not in STOP and len(w) > 1}
+    return {w[:-1] if w.endswith('s') and len(w) > 3 else w for w in words}  # crude plural stemming
 
 
 def search_manual(question: str) -> tuple[str, str]:

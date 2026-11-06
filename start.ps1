@@ -45,7 +45,7 @@ if ($cfg['SUPABASE_PUBLISHABLE_KEY'] -and $cfg['SUPABASE_PUBLISHABLE_KEY'] -ne $
 if ($cfg['DJANGO_DEBUG'] -ne 'false') { Fail 'Set DJANGO_DEBUG=false.' }
 if (-not $cfg['DJANGO_SECRET_KEY']) { Fail 'DJANGO_SECRET_KEY is empty.' }
 if ($cfg['DATABASE_URL']) { Fail 'Remove DATABASE_URL from .env; migrations use deploy\selfhost\apply-legacy-migrations.ps1.' }
-foreach ($flag in 'NECMS_ENABLED', 'VITE_NECMS_ENABLED', 'VITE_SYNTHETIC_DEMO', 'VITE_NECMS_PRESENTATION') {
+foreach ($flag in 'NECMS_ENABLED', 'VITE_NECMS_ENABLED', 'VITE_SYNTHETIC_DEMO', 'VITE_NECMS_PRESENTATION', 'CRAN_DEMO', 'VITE_CRAN_DEMO') {
     if ($cfg[$flag] -and $cfg[$flag] -ne 'false') { Fail "$flag must be false for the pilot." }
     # Process environment variables would override .env for both Django and Vite.
     Remove-Item "Env:$flag" -ErrorAction SilentlyContinue
