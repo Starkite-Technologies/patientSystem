@@ -31,6 +31,14 @@ npm.cmd run demo:cran
 
 Open http://127.0.0.1:5180. The demo seeds itself on first start. **Reset demo** (top right) restores 12 waiting patients plus one scripted patient whose vitals worsen 60 seconds later. **Trigger deterioration** fires it immediately.
 
+**Public link: https://cran.starkitetechnologies.com.** From this folder, on the `cran-demo` branch:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\start-cran.ps1
+```
+
+It builds `dist-cran\`, serves it on 127.0.0.1:5180 with Django on 127.0.0.1:8010 (waitress, DEBUG off), and publishes it through the same named tunnel `patientflow` as the pilot (`%USERPROFILE%\.cloudflared\patientflow.yml` has a `cran.starkitetechnologies.com → 127.0.0.1:5180` rule). There is no sign-in, and it opens straight into demo mode with synthetic data. It never starts, stops or rebuilds the pilot. If the pilot is running, its tunnel connector is reused. That connector only reads the config at startup, so after the cran rule was added the pilot must be restarted once before the cran link answers. If the pilot is not running, the script starts its own connector and stops it on Ctrl+C.
+
 Tests: `npm.cmd run test:cran` (FHIR mappers and validator, registry, NEWS2 rules, deterioration, forecast, AI fallback and AI path with a mocked API, full demo script through the HTTP API, exports).
 
 ### Environment variables
