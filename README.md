@@ -1,5 +1,10 @@
 # PatientFlow
 
+The current laptop pilot uses the **existing self-hosted Supabase stack**. Follow
+[the current pilot guide](deploy/PILOT_DEPLOYMENT.md). Do not create another project,
+apply migrations, restart the public app, or deploy changes without approval.
+Hosted-project setup below is for other installations, not this pilot.
+
 NECMS multi-hospital source changes are prepared behind disabled development flags.
 Read [the Milestone 2B report](docs/architecture/NECMS_2B_COMPLETION_REPORT.md) before enabling them.
 The new migration has only run in disposable tests; do not apply it to a hosted
@@ -9,6 +14,122 @@ Isolated software checks: `powershell.exe -NoProfile -ExecutionPolicy Bypass -Fi
 Hospital browser checks: run `node scripts/start-necms-test.mjs`, then
 `node scripts/check-hospital-browser.mjs` in another terminal. This harness uses
 synthetic sessions and mocked Django responses, and blocks external HTTP traffic.
+
+## CRAN Tech Challenge demo (synthetic data only)
+
+AI-assisted emergency triage built on HL7 FHIR R4, with a **mock** national registry (Master Patient Index).
+It runs separately from the pilot: different ports (8010 / 5180), no Supabase project, no real data.
+The AI only suggests. Every level change, alert decision and signed note is confirmed by a clinician and logged with user and time.
+
+### Run it (one command)
+
+```powershell
+npm.cmd install
+python -m venv .venv; .\.venv\Scripts\python.exe -m pip install -r backend\requirements.txt   # first time only
+npm.cmd run demo:cran
+```
+
+Open http://127.0.0.1:5180. The demo seeds itself on first start. **Reset demo** (top right) restores 12 waiting patients plus one scripted patient whose vitals worsen 60 seconds later. **Trigger deterioration** fires it immediately.
+
+**Public link: https://cran.starkitetechnologies.com.** From this folder, on the `cran-demo` branch:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\start-cran.ps1
+```
+
+It builds `dist-cran\`, serves it on 127.0.0.1:5180 with Django on 127.0.0.1:8010 (waitress, DEBUG off), and publishes it through the same named tunnel `patientflow` as the pilot (`%USERPROFILE%\.cloudflared\patientflow.yml` has a `cran.starkitetechnologies.com → 127.0.0.1:5180` rule). There is no sign-in, and it opens straight into demo mode with synthetic data. It never starts, stops or rebuilds the pilot. If the pilot is running, its tunnel connector is reused. That connector only reads the config at startup, so after the cran rule was added the pilot must be restarted once before the cran link answers. If the pilot is not running, the script starts its own connector and stops it on Ctrl+C.
+
+Tests: `npm.cmd run test:cran` (FHIR mappers and validator, registry, NEWS2 rules, deterioration, forecast, AI fallback and AI path with a mocked API, full demo script through the HTTP API, exports).
+
+### Environment variables
+
+Put demo settings in `.env.cran` (git-ignored). Everything is optional; with nothing set the demo runs on the rule-based engine.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | empty | Enables the AI assistant (Claude). Missing or failing → rule-based engine, shown in the UI. |
+| `ANTHROPIC_MODEL` | `claude-sonnet-5-5` | Model used for suggestions. |
+| `AI_DISABLED` | `false` | Force the rule-based engine (rehearse the no-AI path). |
+| `CRAN_STORE` | `file` | `file` (local JSON, `backend/.cran-data/`), `memory`, or `supabase` (separate synthetic-only project). |
+| `CRAN_SUPABASE_URL` / `CRAN_SUPABASE_KEY` | empty | Demo Supabase project for `CRAN_STORE=supabase`. Refused if it equals the pilot project URL. |
+| `VITE_CRAN_REALTIME`, `VITE_CRAN_SUPABASE_URL`, `VITE_CRAN_SUPABASE_KEY` | empty | Set `VITE_CRAN_REALTIME=supabase` for Supabase Realtime on the board (otherwise a 2-second poll). |
+| `REGISTRY_CONNECTOR` | `mock` | `mock` or `fhir-http`. |
+| `REGISTRY_BASE_URL` / `REGISTRY_TOKEN` | empty | Real FHIR R4 registry endpoint for `fhir-http`. |
+| `CRAN_DEMO`, `VITE_CRAN_DEMO` | `false` | Set by `demo:cran`. `start.ps1` refuses to start the pilot if either is true. |
+
+### Architecture
+
+```mermaid
+flowchart LR
+  subgraph Browser["Browser (React, src/cran)"]
+    UI["Arrival · Board · Patient view<br/>Dashboard · Help · Role switcher"]
+    SPEECH["Web Speech API (dictation)"]
+  end
+  subgraph Django["Django backend :8010"]
+    API["/api/cran/* demo API"]
+    FHIRAPI["/fhir/* FHIR R4 API"]
+    SVC["cran.service<br/>decisions + audit log"]
+    MAP["cran.fhir<br/>mappers + validator"]
+    CONN["NationalRegistryConnector"]
+    AI["ai/ module<br/>NEWS2 rules · deterioration · forecast<br/>prompts/*.v1.md"]
+  end
+  STORE[("FHIR JSON store<br/>file (demo) or Supabase<br/>fhir_resources + cran_records")]
+  MOCK["MockConnector<br/>mock-mpi (50 synthetic people)"]
+  REAL["FhirHttpConnector<br/>(future: MoHSS registry)"]
+  CLAUDE["Anthropic Claude API (optional)"]
+  SPEECH --> UI
+  UI -->|JSON| API
+  API --> SVC
+  FHIRAPI --> MAP
+  SVC --> MAP --> STORE
+  SVC --> CONN
+  CONN -->|REGISTRY_CONNECTOR=mock| MOCK
+  CONN -.->|REGISTRY_CONNECTOR=fhir-http| REAL
+  SVC --> AI
+  AI -.->|age, sex, vitals, complaint only; falls back to rules| CLAUDE
+```
+
+FHIR routes: `GET /fhir/Patient?identifier=<health-id>`, `GET /fhir/Patient/:id`, `POST /fhir/Encounter`, `POST /fhir/Observation`, `GET /fhir/Encounter/:id/$everything`, `GET /fhir/metadata`. The mock registry is also exposed as its own endpoint, `GET /mock-mpi/fhir/Patient?identifier=`.
+
+**Why JSON FHIR documents instead of new typed tables:** the existing schema is a typed, RLS-protected multi-hospital model used by a live pilot, and the demo must not change it. Storing whole R4 resources keeps the FHIR shape exact, needs one additive table, and can live in a separate project. `supabase/cran-demo/cran_demo_schema.sql` is deliberately outside `supabase/migrations/` and is for a throwaway synthetic-data project only (it grants the anon role access).
+
+### Swapping the mock registry for a real MoHSS registry
+
+All registry access goes through `NationalRegistryConnector` (`backend/cran/registry.py`). It has one required method, `lookup(identifier) -> FHIR Bundle | None`, which returns the Patient first, then history. The swap is configuration:
+
+```
+REGISTRY_CONNECTOR=fhir-http
+REGISTRY_BASE_URL=https://<registry>/fhir
+REGISTRY_TOKEN=<token>
+```
+
+`FhirHttpConnector` calls `GET {base}/Patient?identifier=` and then `GET {base}/Patient/{id}/$everything`. A registry that is not FHIR (for example HL7 v2 or a custom API) needs a new subclass with the same `lookup` contract. Nothing else changes. The UI shows the connector's `label`. The mock says "National registry (demo mock)", and PatientFlow never claims live MoHSS connectivity.
+
+### 3-minute demo script
+
+| Time | Role | Do this | Show |
+|---|---|---|---|
+| 0:00 | — | Landing page → **Start the demo** | Tagline; AI status strip; "National registry (demo mock)" |
+| 0:15 | Nurse | Arrival → type `NHI-1000001` → **Search registry** | Registry record loads; allergy (penicillin) in red; 3–4 sentence summary |
+| 0:45 | Nurse | HR 118, RR 22, BP 168/98, Temp 37.2, SpO₂ 95, Alert; complaint "Central chest pain for one hour, sweating" → **Get triage suggestion** | Rule baseline (NEWS2 5 → P2 Orange) and AI suggestion with reasons, both labelled; the more urgent is highlighted |
+| 1:15 | Nurse | **Confirm** | Board re-sorts; patient in the Orange group with a live timer |
+| 1:30 | Nurse | Wait for the alert (60 s after reset) or press **Trigger deterioration** | Red banner "Suggest moving up to P2 Orange" with reasons → **Confirm** → board re-sorts |
+| 2:00 | Doctor | Switch to **Doctor** → open the patient → **Start dictation**, speak → **Draft note** | Structured draft (complaint / findings / plan) labelled as a suggestion → edit → **Sign note**; triage history lists every decision with names and times |
+| 2:35 | Supervisor | Switch to **Supervisor** → **Dashboard** | Patients and average wait by level, arrivals today, 6-hour **Forecast** with its method |
+| 2:50 | Supervisor | **FHIR Bundle (today)** and **DHIS2-style report** | R4 Bundle JSON and a DHIS2-compatible dataValueSet (labelled demo) |
+
+Before going on stage: press **Reset demo** about a minute before the deterioration step, or use **Trigger deterioration**. Rehearse once with `AI_DISABLED=true`.
+
+### What is mocked, and known limitations
+
+- The national registry, its identifiers (`NHI-…`), and all 50 people are synthetic. The DHIS2 export uses placeholder data element and org unit codes.
+- The NEWS2 → triage-colour mapping and the deterioration threshold are demo assumptions, marked `TODO(antonio)` in `backend/ai/triage.py` and `backend/ai/deterioration.py`. They need clinical sign-off. NEWS2 is not validated for under-16s or pregnancy, and the UI warns for children.
+- Demo roles have no authentication (`X-Demo-Role` header). The demo API answers only when `CRAN_DEMO=true`.
+- The FHIR validator is structural (required elements, cardinality, value sets, references). It is not a full profile validator.
+- Dictation uses the browser's speech recognition (Chrome/Edge), which may send audio to the browser vendor. That is acceptable for synthetic speech but must be reviewed before real use. Names and IDs are removed from the transcript before it is sent to the AI.
+- The Supabase store and Realtime path are written but were not run against a live project in this build. The stage demo uses the file store.
+
+## PatientFlow pilot
 
 Emergency department patient tracking prototype for Starkite Technologies. Tracks every visit, assigned urgency, location, responsible clinician, pending service, and elapsed time. This is a workflow prototype; clinical priorities and colour meanings must be agreed with the hospital before clinical use.
 

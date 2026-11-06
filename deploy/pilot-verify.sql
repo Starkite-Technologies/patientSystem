@@ -1,4 +1,4 @@
--- PatientFlow pilot: read-only verification after the six legacy migrations.
+-- PatientFlow pilot: read-only verification after the six legacy migrations and the pilot export audit.
 -- Run in the Supabase SQL Editor of the PILOT project. Changes nothing.
 -- Every row should say PASS.
 with checks(check_name, ok) as (
@@ -54,6 +54,21 @@ with checks(check_name, ok) as (
     not has_table_privilege('anon', 'public.patients', 'select')
     and not has_table_privilege('anon', 'public.visits', 'select')
     and not has_table_privilege('anon', 'public.visit_board', 'select')
+  union all
+  -- Pilot export audit (202610270001). CASE keeps the privilege check from erroring when it is missing.
+  select 'record_export: authenticated can execute, anon cannot',
+    case when to_regprocedure('public.record_export(text,jsonb,text[])') is null then false
+      else has_function_privilege('authenticated', 'public.record_export(text,jsonb,text[])', 'execute')
+        and not has_function_privilege('anon', 'public.record_export(text,jsonb,text[])', 'execute') end
+  union all
+  -- Pilot theatre list (202610310001): RLS on, anonymous blocked, booking only through the checked function.
+  select 'theatre list: RLS on, anon blocked, book_theatre_case for authenticated only',
+    case when to_regclass('public.theatre_bookings') is null or to_regprocedure('public.book_theatre_case(jsonb)') is null then false
+      else (select relrowsecurity from pg_class where oid = 'public.theatre_bookings'::regclass)
+        and not has_table_privilege('anon', 'public.theatre_bookings', 'select')
+        and not has_table_privilege('authenticated', 'public.theatre_bookings', 'insert')
+        and has_function_privilege('authenticated', 'public.book_theatre_case(jsonb)', 'execute')
+        and not has_function_privilege('anon', 'public.book_theatre_case(jsonb)', 'execute') end
 )
 select case when ok then 'PASS' else 'FAIL' end as result, check_name
 from checks

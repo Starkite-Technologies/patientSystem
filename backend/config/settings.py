@@ -1,6 +1,5 @@
 import os
 from pathlib import Path
-from urllib.parse import urlparse
 
 from django.core.exceptions import ImproperlyConfigured
 from dotenv import load_dotenv
@@ -17,7 +16,7 @@ if not SECRET_KEY:
     else:
         raise ImproperlyConfigured('Set DJANGO_SECRET_KEY, or use DJANGO_DEBUG=true for local development.')
 ALLOWED_HOSTS = [h.strip() for h in os.getenv('DJANGO_ALLOWED_HOSTS', 'localhost,127.0.0.1,testserver').split(',') if h.strip()]
-INSTALLED_APPS = ['rest_framework', 'patients']
+INSTALLED_APPS = ['rest_framework', 'patients', 'cran']
 MIDDLEWARE = ['django.middleware.security.SecurityMiddleware', 'patients.middleware.ClinicalCacheControl', 'django.middleware.common.CommonMiddleware']
 ROOT_URLCONF = 'config.urls'
 WSGI_APPLICATION = 'config.wsgi.application'
@@ -41,12 +40,24 @@ REST_FRAMEWORK = {
 SUPABASE_URL = os.getenv('SUPABASE_URL') or os.getenv('VITE_SUPABASE_URL', '')
 SUPABASE_URL = SUPABASE_URL.rstrip('/')
 SUPABASE_PUBLISHABLE_KEY = os.getenv('SUPABASE_PUBLISHABLE_KEY') or os.getenv('VITE_SUPABASE_PUBLISHABLE_KEY', '')
-if SUPABASE_URL and urlparse(SUPABASE_URL).scheme != 'https':
-    raise ImproperlyConfigured('SUPABASE_URL must be an HTTPS project URL.')
-from patients.key_safety import public_key_allowed
+from patients.key_safety import public_key_allowed, supabase_url_allowed
+if SUPABASE_URL and not supabase_url_allowed(SUPABASE_URL):
+    raise ImproperlyConfigured('SUPABASE_URL must be an HTTPS project URL, or http://127.0.0.1:<port> for a local self-hosted gateway.')
 if not public_key_allowed(SUPABASE_PUBLISHABLE_KEY):
     raise ImproperlyConfigured('Use a publishable key for the user-scoped Supabase gateway.')
 SECURE_CONTENT_TYPE_NOSNIFF = True
 SECURE_SSL_REDIRECT = os.getenv('DJANGO_SECURE_SSL_REDIRECT', 'false').lower() == 'true'
 SESSION_COOKIE_SECURE = not DEBUG
 CSRF_COOKIE_SECURE = not DEBUG
+
+# --- CRAN Tech Challenge demo (synthetic data only; off unless CRAN_DEMO=true) ---
+CRAN_DEMO = os.getenv('CRAN_DEMO', 'false').lower() == 'true'
+CRAN_STORE = os.getenv('CRAN_STORE', 'file')  # file | memory | supabase
+CRAN_DATA_FILE = os.getenv('CRAN_DATA_FILE', str(ROOT_DIR / 'backend' / '.cran-data' / 'store.json'))
+CRAN_SUPABASE_URL = os.getenv('CRAN_SUPABASE_URL', '')
+CRAN_SUPABASE_KEY = os.getenv('CRAN_SUPABASE_KEY', '')
+if CRAN_STORE == 'supabase' and CRAN_SUPABASE_URL and CRAN_SUPABASE_URL.rstrip('/') == SUPABASE_URL:
+    raise ImproperlyConfigured('CRAN_SUPABASE_URL must be a separate, synthetic-only demo project, not the PatientFlow project.')
+REGISTRY_CONNECTOR = os.getenv('REGISTRY_CONNECTOR', 'mock')  # mock | fhir-http
+REGISTRY_BASE_URL = os.getenv('REGISTRY_BASE_URL', '')
+REGISTRY_TOKEN = os.getenv('REGISTRY_TOKEN', '')

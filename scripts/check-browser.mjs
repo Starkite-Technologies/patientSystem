@@ -12,8 +12,16 @@ try {
   await expect(page.getByText('Alex Morgan', { exact: true })).toBeVisible();
   await page.locator('.table-scroll').evaluate(element => { element.scrollTop = element.scrollHeight; });
   const listBounds = await page.locator('.table-scroll').boundingBox();
-  const headingBounds = await page.getByRole('columnheader', { name: 'Patient', exact: true }).boundingBox();
-  if (!listBounds || !headingBounds || Math.abs(headingBounds.y - listBounds.y) > 2) throw new Error('Patient column headings do not stay frozen when scrolling.');
+  const heading = page.getByRole('columnheader', { name: 'Patient', exact: true });
+  if (await heading.isVisible()) {
+    const headingBounds = await heading.boundingBox();
+    if (!listBounds || !headingBounds || Math.abs(headingBounds.y - listBounds.y) > 2) throw new Error('Patient column headings do not stay frozen when scrolling.');
+  } else {
+    // Narrow boards use labelled patient cards rather than table headers.
+    await expect(page.locator('.cell-triage').first()).toHaveAttribute('data-label', 'Triage');
+    await expect(page.locator('.cell-status').first()).toHaveAttribute('data-label', 'Status');
+    await expect(page.getByRole('button', { name: 'View Alex Morgan', exact: true })).toBeVisible();
+  }
   await page.locator('.table-scroll').evaluate(element => { element.scrollTop = 0; });
   await page.getByRole('button', { name: 'Register patient', exact: true }).click();
   await mkdir('test-results', { recursive: true });
@@ -59,7 +67,7 @@ try {
   await page.getByRole('combobox', { name: 'Filter by priority' }).selectOption('all');
   await mkdir('test-results', { recursive: true });
   await page.screenshot({ path: 'test-results/desktop.png', fullPage: true });
-  await page.getByRole('button', { name: 'Display mode' }).click();
+  await page.getByRole('button', { name: 'Display mode', exact: true }).click();
   await expect(page.getByText('Alex Morgan', { exact: true })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Register patient', exact: true })).toHaveCount(0);
   await page.getByRole('button', { name: 'Exit display' }).click();
@@ -84,6 +92,14 @@ try {
   await page.getByRole('dialog').getByRole('button', { name: 'Register patient', exact: true }).click();
   await expect(page.getByRole('alert')).toContainText('already has an active visit');
   await page.getByRole('button', { name: 'Close patient details' }).click();
+  for (const size of ['Large text', 'Extra large text', 'Normal text']) {
+    await page.getByRole('button', { name: size, exact: true }).click();
+    await expect(page.getByRole('button', { name: size, exact: true })).toHaveAttribute('aria-pressed', 'true');
+    if (await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)) throw new Error(`Mobile layout overflows with ${size}.`);
+  }
+  await page.getByRole('button', { name: 'Help', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Help', exact: true })).toBeVisible();
+  await expect(page.getByText('How to use PatientFlow', { exact: true })).toBeVisible();
   if (errors.length) throw new Error(errors.join('\n'));
   console.log('Browser checks passed: registration, editing, persistence, discharge, resources, activity, filters, display privacy, mobile layout, and duplicate validation.');
 } finally {

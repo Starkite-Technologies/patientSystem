@@ -1,11 +1,14 @@
-from django.urls import path
+from django.urls import include, path
 from patients import views
 from patients import necms_views as necms
 from patients import clinical_views as clinical
 from patients import coordination_views as coordination
 from patients import paged_views as paged
+from patients import export_views
+from patients import theatre_views as theatre
 
 urlpatterns = [
+    path('', include('cran.urls')),
     path('api/necms/hospitals/<uuid:hospital_id>/read/<str:kind>/', paged.page),
     path('api/necms/hospitals/<uuid:hospital_id>/workspace/', paged.workspace),
     path('api/necms/hospitals/<uuid:hospital_id>/coordination/', coordination.board),
@@ -36,4 +39,12 @@ urlpatterns = [
     path('api/visits/', views.create_visit),
     path('api/visits/<uuid:visit_id>/', views.update_visit),
     path('api/resources/<uuid:resource_id>/', views.update_resource),
+    path('api/export/', export_views.export_visits),
+    path('api/theatre/', theatre.board),
+    path('api/theatre/bookings/', theatre.book),
+    path('api/theatre/bookings/<uuid:booking_id>/', theatre.update),
+    path('api/theatre/bookings/<uuid:booking_id>/priority/', theatre.priority),
+    path('api/theatre/bookings/<uuid:booking_id>/times/', theatre.record_time),
+    path('api/theatre/bookings/<uuid:booking_id>/cancel/', theatre.cancel),
+    path('api/theatre/bookings/<uuid:booking_id>/history/', theatre.history),
 ]

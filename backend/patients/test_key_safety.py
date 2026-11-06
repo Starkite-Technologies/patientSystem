@@ -1,7 +1,18 @@
 import base64
 import json
 from unittest import TestCase
-from .key_safety import public_key_allowed
+from .key_safety import public_key_allowed, supabase_url_allowed
+
+
+class SupabaseUrlSafetyTests(TestCase):
+    def test_https_and_loopback_http(self):
+        for url in ['https://synthetic.supabase.co', 'http://127.0.0.1:8100', 'http://localhost:8100', 'http://[::1]:8100']:
+            self.assertTrue(supabase_url_allowed(url), url)
+
+    def test_remote_http_and_other_schemes(self):
+        for url in ['http://synthetic.supabase.co', 'http://10.0.0.5:8100', 'http://127.0.0.1.example.com',
+                    'same-origin', 'ftp://127.0.0.1', 'https://', 'http://[bad']:
+            self.assertFalse(supabase_url_allowed(url), url)
 
 
 class PublicKeySafetyTests(TestCase):

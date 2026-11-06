@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import type { Session } from '@supabase/supabase-js';
-import { Activity, AlertTriangle, ArrowRight, BedDouble, Check, ChevronRight, ClipboardList, Clock3, LayoutDashboard, LogOut, Monitor, Plus, RefreshCw, Search, ShieldCheck, Users, X } from 'lucide-react';
+import { Activity, AlertTriangle, ArrowRight, BedDouble, Check, ChevronRight, CircleHelp, ClipboardList, Clock3, Download, LayoutDashboard, LogOut, Monitor, Plus, RefreshCw, Scissors, Search, Settings, ShieldCheck, Users, X } from 'lucide-react';
 import { actions, active, ageAtDate, hospitalDate, canManageResources, compareVisits, formatMinutes, fullName, minutesOverdue, priorities, queuePosition, triageCategories, statuses, waitLabel, displayedPriority, triageLabel, type BoardData, type HospitalContext, type Resource, type Visit, type VisitInput } from './model';
 import { configurationError, supabase } from './lib/supabase';
 import { loadBoard, resetDemo, saveVisit, setResourceState, necmsEnabled } from './lib/store';
@@ -13,10 +13,22 @@ const PatientPicker=lazy(()=>import('./PatientPicker').then(module=>({default:mo
 import {visitPermissions} from './lib/visitPermissions';
 import { apiRequest, ApiError } from './lib/api';
 import { ProtectedRequests, type ProtectedTicket } from './lib/protectedRequests';
+import { applyTextSize, readTextSize, saveTextSize, textSizes, type TextSize } from './lib/textSize';
+import { HelpLink, HelpPage } from './HelpPage';
+import { developerCredit, supportEmail, type HelpSectionId } from './help/manual';
+import { readStartView } from './lib/preferences';
+import { theatrePermissions } from './lib/theatre';
 
 const ClientPresentation=lazy(()=>import('./ClientPresentation').then(m=>({default:m.ClientPresentation})));
+const ExportDialog=lazy(()=>import('./ExportDialog').then(m=>({default:m.ExportDialog})));
+const TheatreList=lazy(()=>import('./TheatreList').then(m=>({default:m.TheatreList})));
+const SettingsPage=lazy(()=>import('./SettingsPage').then(m=>({default:m.SettingsPage})));
 
-type View = 'board' | 'resources' | 'activity' | 'archive' | 'coordination';
+type View = 'board' | 'theatre' | 'resources' | 'activity' | 'archive' | 'coordination' | 'settings' | 'help';
+const viewTitles: Record<View, string> = { board: 'Patient board', theatre: 'Emergency theatre list', coordination: 'Emergency coordination', resources: 'Spaces & resources', activity: 'Activity log', archive: 'Completed visits', settings: 'Settings', help: 'Help' };
+const viewDescriptions: Record<View, string> = { board: 'Every patient. Every next step. One shared view.', theatre: 'Emergency surgery booked by urgency, with live deadlines and theatre status.', coordination: 'Scoped care coordination, current work and patient visibility.', resources: 'See what is available and where patients are receiving care.', activity: 'A record of patient, theatre and resource changes.', archive: 'Discharged and transferred patients remain in the visit history.', settings: 'Display preferences, your account, priority codes and support.', help: 'Plain-language guide for doctors, nurses and coordinators.' };
+const viewEyebrows: Partial<Record<View, string>> = { theatre: 'THEATRE COORDINATION', settings: 'PREFERENCES', help: 'USER MANUAL' };
+const viewHelp: Partial<Record<View, HelpSectionId>> = { board: 'board', theatre: 'theatre', resources: 'spaces', activity: 'activity', archive: 'discharge', settings: 'settings' };
 const emptyBoard: BoardData = { visits: [], resources: [], events: [], role: 'viewer' };
 
 export default function App() {
@@ -74,12 +86,14 @@ function Login({ initialError }: { initialError: string }) {
     {error && <p className="error" role="alert">{error}</p>}
     <button className="primary" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}<ArrowRight size={17} /></button>
     <small>Accounts are provisioned by your administrator.</small>
-  </form></div>;
+  </form><p className="credit login-credit">{developerCredit}</p></div>;
 }
 
 function Board({ email, context, onLogout }: { email?: string; context?: HospitalContext; onLogout: () => Promise<void> }) {
   const [data, setData] = useState<BoardData>(emptyBoard);
-  const [view, setView] = useState<View>('board');
+  // Theatre list needs the Django API: not in the browser-only demo or NECMS mode.
+  const theatreEnabled = Boolean(supabase) && !context;
+  const [view, setView] = useState<View>(() => theatreEnabled && readStartView() === 'theatre' ? 'theatre' : 'board');
   const [search, setSearch] = useState('');
   const [pageCursor,setPageCursor]=useState<string|null>(null);
   const [pageBack,setPageBack]=useState<(string|null)[]>([]);
@@ -96,6 +110,11 @@ function Board({ email, context, onLogout }: { email?: string; context?: Hospita
   const [connection, setConnection] = useState(supabase ? 'Connecting' : 'Local demo');
   const [loading, setLoading] = useState(true);
   const [wall, setWall] = useState(false);
+  const [helpTarget, setHelpTarget] = useState<{ section: HelpSectionId | null; at: number }>({ section: null, at: 0 });
+  const [exporting, setExporting] = useState(false);
+  const [textSize, setTextSize] = useState<TextSize>(readTextSize);
+  const openHelp = (section: HelpSectionId | null) => { setWall(false); setView('help'); setHelpTarget({ section, at: Date.now() }); };
+  const chooseTextSize = (size: TextSize) => { setTextSize(size); saveTextSize(size); applyTextSize(size); };
   const [now, setNow] = useState(Date.now());
   const requests = useMemo(() => new ProtectedRequests(), []);
   const clearProtected = useCallback((message: string) => {
@@ -155,19 +174,26 @@ function Board({ email, context, onLogout }: { email?: string; context?: Hospita
       <div className="workspace"><span className="workspace-icon">ED</span><div>Emergency department<small>Department workspace</small></div><ChevronRight size={14} /></div>
       <p className="nav-label">WORKSPACE</p>
       <nav aria-label="Main navigation">{([
-        ['board', LayoutDashboard, 'Patient board'], ['coordination', Activity, 'Emergency coordination'], ['resources', BedDouble, 'Spaces & resources'], ['activity', ClipboardList, 'Activity log'], ['archive', Users, 'Completed visits'],
-      ] as const).filter(([key]) => (key !== 'coordination' || data.capabilities?.includes('queue.read')) && (key !== 'activity' || !context || data.capabilities?.includes('audit.summary.read'))).map(([key, Icon, label]) => <button key={key} className={view === key ? 'nav-active' : ''} onClick={() => { setView(key); setSearch(''); setPriority('all'); setStatus('all'); setAction('all'); }}><Icon size={18} />{label}{key === 'board' && <span className="nav-count">{context?(data.page?.total??current.length):current.length}</span>}</button>)}</nav>
+        ['board', LayoutDashboard, 'Patient board'], ['theatre', Scissors, 'Theatre list'], ['coordination', Activity, 'Emergency coordination'], ['resources', BedDouble, 'Spaces & resources'], ['activity', ClipboardList, 'Activity log'], ['archive', Users, 'Completed visits'], ['settings', Settings, 'Settings'], ['help', CircleHelp, 'Help'],
+      ] as const).filter(([key]) => (key !== 'theatre' || theatreEnabled) && (key !== 'coordination' || data.capabilities?.includes('queue.read')) && (key !== 'activity' || !context || data.capabilities?.includes('audit.summary.read'))).map(([key, Icon, label]) => <button key={key} className={view === key ? 'nav-active' : ''} aria-current={view === key ? 'page' : undefined} onClick={() => { if (key === 'help') openHelp(null); else setView(key); setSearch(''); setPriority('all'); setStatus('all'); setAction('all'); }}><Icon size={18} />{label}{key === 'board' && <span className="nav-count">{context?(data.page?.total??current.length):current.length}</span>}</button>)}</nav>
+      <fieldset className="text-size"><legend>Text size: {textSizes.find(s => s.id === textSize)?.label}</legend><div className="text-size-options">{textSizes.map(size => <button key={size.id} type="button" aria-pressed={textSize === size.id} aria-label={`${size.label} text`} title={`${size.label} text`} onClick={() => chooseTextSize(size.id)}>A</button>)}</div></fieldset>
       <div className="sidebar-bottom"><ShieldCheck size={20} /><p>Shared visibility.<br /><strong>Clinician-led decisions.</strong></p></div>
       <div className="user"><span className="avatar">{email ? email.slice(0, 2).toUpperCase() : 'DC'}</span><div>{email ?? `Demo ${data.role}`}<small>{data.role}</small></div>{supabase && <button className="icon-button" aria-label="Sign out" onClick={() => void onLogout()}><LogOut size={17} /></button>}</div>
+      <p className="credit sidebar-credit">{developerCredit}</p>
     </aside>}
     <main>
-      <header className="topbar"><span>Emergency department <ChevronRight size={13} /> <strong>{view === 'coordination' ? 'Emergency coordination' : view === 'board' ? 'Patient board' : view === 'resources' ? 'Spaces & resources' : view === 'archive' ? 'Completed visits' : 'Activity log'}</strong></span><span className="topbar-date">{new Date(now).toLocaleDateString('en-ZA', { weekday: 'short', day: 'numeric', month: 'short' })}<Clock3 size={15} />{new Date(now).toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' })}</span></header>
+      <header className="topbar"><span>Emergency department <ChevronRight size={13} /> <strong>{viewTitles[view]}</strong></span><span className="topbar-date">{new Date(now).toLocaleDateString('en-ZA', { weekday: 'short', day: 'numeric', month: 'short' })}<Clock3 size={15} />{new Date(now).toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' })}</span></header>
       {!supabase && <div className="demo-banner"><span><strong>Demo workspace</strong> · Fictional patients, saved in this browser. Priority colours are illustrative.</span><button onClick={() => { if (window.confirm('Reset all fictional demo patients and changes?')) { resetDemo(); setNotice('Demo reset.'); } }}>Reset demo</button></div>}
       <div className="page-content">
-        <div className="page-heading"><div><p className="eyebrow">DEPARTMENT OVERVIEW</p><h1>{view === 'coordination' ? 'Emergency coordination' : view === 'board' ? 'Patient board' : view === 'resources' ? 'Spaces & resources' : view === 'archive' ? 'Completed visits' : 'Activity log'}</h1><p>{view === 'coordination' ? 'Scoped care coordination, current work and patient visibility.' : view === 'board' ? 'Every patient. Every next step. One shared view.' : view === 'resources' ? 'See what is available and where patients are receiving care.' : view === 'archive' ? 'Discharged and transferred patients remain in the visit history.' : 'A record of patient and resource changes.'}</p></div><div className="heading-actions"><button disabled={Boolean(context)} title={context ? 'Use Restricted shared display above' : undefined} className="secondary" onClick={() => { if (!context) { setWall(!wall); setView('board'); } }}><Monitor size={16} />{wall ? 'Exit display' : 'Display mode'}</button>{!wall && permission.register && <button className="primary" onClick={() => setEditor('new')}><Plus size={18} />Register patient</button>}</div></div>
+        <div className="page-heading"><div><p className="eyebrow">{viewEyebrows[view] ?? 'DEPARTMENT OVERVIEW'}</p><h1 aria-label={wall && view !== 'theatre' ? viewTitles.board : viewTitles[view]}>{wall ? (view === 'theatre' ? viewTitles.theatre : viewTitles.board) : viewTitles[view]}{!wall && viewHelp[view] && <HelpLink section={viewHelp[view]} onOpen={openHelp} />}</h1><p>{viewDescriptions[view]}</p></div>{view !== 'help' && view !== 'settings' && <div className="heading-actions">
+          {!wall && !context && supabase && (view === 'theatre' ? theatrePermissions(data.role).export : data.role === 'coordinator' && (view === 'board' || view === 'archive')) && <button className="secondary" onClick={() => setExporting(true)}><Download size={16} />Export</button>}
+          <button disabled={Boolean(context)} title={context ? 'Use Restricted shared display above' : undefined} className="secondary" onClick={() => { if (!context) { setWall(!wall); if (view !== 'theatre') setView('board'); } }}><Monitor size={16} />{wall ? 'Exit display' : 'Display mode'}</button>
+          {!wall && (view === 'board' || view === 'theatre') && <HelpLink section="display" onOpen={openHelp} />}
+          {!wall && view !== 'theatre' && permission.register && <button className="primary" onClick={() => setEditor('new')}><Plus size={18} />Register patient</button>}
+        </div>}</div>
         {error && <div className="error" role="alert">{error} <button onClick={() => void refresh()}>Retry</button></div>}
         {notice && <div className="notice" role="status"><Check size={16} />{notice}</div>}
-        {view!=='coordination'&&<section className="stats" aria-label="Department totals">
+        {!['coordination', 'help', 'settings', 'theatre'].includes(view)&&<section className="stats" aria-label="Department totals">
           <Stat label={context?(view==='archive'?'Matching completed encounters':'Matching active encounters'):'Active patients'} value={context?(data.page?.total??0):current.length} icon={<Users size={19} />} detail={context?"Matching encounters across all pages":"Across the department"} />
           <Stat label="High priority" value={current.filter(v => displayedPriority(v) !== null && displayedPriority(v)! <= 2).length} icon={<Activity size={19} />} detail={context?"Current page only; unvalidated labels":"Red or Orange"} tone="red" />
           <Stat label="Waiting / ready" value={waiting.length} icon={<Clock3 size={19} />} detail={context?"Current page only":"Pending their next service"} tone="amber" />
@@ -178,15 +204,15 @@ function Board({ email, context, onLogout }: { email?: string; context?: Hospita
         {(view === 'board' || view === 'archive') && <section className="board-panel">
           <div className="panel-heading"><div><h2>{view === 'archive' ? 'Visit history' : context ? 'Current patient page' : 'Department patients'} <span className="count-pill">{visible.length}</span></h2><p>Red first through Blue, then by arrival time.</p></div><div className={`sync-status ${stale ? 'sync-warning' : ''}`}><span className="status-dot" />{stale ? 'Updates delayed' : connection}<button className="icon-button" aria-label="Refresh board" onClick={() => void refresh()}><RefreshCw size={14} /></button></div></div>
           <div className="filters"><label className="search"><Search size={17} /><input aria-label="Search patients" placeholder="Search patients, reference, or clinician…" value={search} onChange={e => setSearch(e.target.value)} /></label><select aria-label="Filter by priority" value={priority} onChange={e => setPriority(e.target.value)}><option value="all">All priorities</option><option value={0} disabled>Choose a priority</option>{priorities.map((p, i) => <option key={p} value={i + 1}>{p}</option>)}</select><select aria-label="Filter by status" value={status} onChange={e => setStatus(e.target.value)}><option value="all">All statuses</option>{Object.entries(statuses).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select><select aria-label="Filter by next service" value={action} onChange={e => setAction(e.target.value)}><option value="all">All services</option>{Object.entries(actions).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></div>
-          <div className="table-scroll" role="region" aria-label="Patient list" tabIndex={0}><table><thead><tr><th>Patient</th><th>Priority</th><th>Status</th><th>Location</th><th>Next step / queue</th><th>Clinician</th><th>Time in ED</th>{!wall && <th><span className="sr-only">Details</span></th>}</tr></thead><tbody>{visible.map(v => <tr key={v.id} className={minutesOverdue(v, now) !== null ? 'row-overdue' : undefined}>
-            <td><div className="patient-cell">{!wall && <span className={`patient-avatar priority-border-${v.priority}`}>{fullName(v).split(' ').map(n => n[0]).slice(0, 2).join('')}</span>}<div><strong>{wall ? v.patient_ref : fullName(v)}</strong><small title="Age calculated at arrival">{wall ? `${ageAtDate(v.date_of_birth, hospitalDate(v.arrived_at)) ?? '—'} years` : `${v.patient_ref} · ${ageAtDate(v.date_of_birth, hospitalDate(v.arrived_at)) ?? '—'} years`}</small>{!wall && <span className="complaint">{v.complaint ?? 'Complaint not yet recorded'}{v.identity_status === 'provisional' && <small>Provisional identity · {v.temporary_identifier}</small>}{v.names_need_review && <small>Name needs review</small>}</span>}</div></div></td>
-            <td><span className={`priority priority-${displayedPriority(v) ?? 0}`}><span />{displayedPriority(v) === null ? 'Not Yet Triaged' : priorities[displayedPriority(v)! - 1]}</span>{displayedPriority(v) !== null && <small className="triage-target">{triageCategories[displayedPriority(v)! - 1]?.target}</small>}{minutesOverdue(v, now) !== null && <span className="overdue"><AlertTriangle size={12} aria-hidden="true" />Overdue +{formatMinutes(minutesOverdue(v, now)!)}</span>}{context && <small>{triageLabel(v)} · {v.urgency_source === 'provisional_manual' ? 'Provisional manual urgency' : v.urgency_source === 'not_assessed' ? 'Not assessed' : 'Legacy/unassessed'}{v.latest_assessment_at ? ` · Latest completed assessment ${new Date(v.latest_assessment_at).toLocaleString()}` : ''}</small>}</td>
-            <td><span className={`care-status status-${v.status}`}>{statuses[v.status]}</span></td>
-            <td><span className="location"><BedDouble size={14} />{v.location || 'Unassigned'}</span></td>
-            <td><div className="next-step">{actions[v.next_action]}{!context && queuePosition(v, data.visits) !== null && <small><span className="queue-number">#{queuePosition(v, data.visits)}</span> in this service queue</small>}</div></td>
-            <td className={v.assigned_to === 'Unassigned' || !v.assigned_to ? 'muted' : ''}>{v.assigned_to || 'Unassigned'}</td>
-            <td><span className="time"><Clock3 size={14} />{waitLabel(v.arrived_at, active(v) ? now : Date.parse(v.updated_at))}</span></td>
-            {!wall && <td><button className="icon-button" aria-label={`View ${fullName(v)}`} onClick={() => setEditor(v)}><ChevronRight size={18} /></button></td>}
+          <div className="table-scroll" role="region" aria-label="Patient list" tabIndex={0}><table className="board-table"><thead><tr><th>Patient</th><th>Priority</th><th>Status</th><th>Location</th><th>Next step / queue</th><th>Clinician</th><th>Time in ED</th>{!wall && <th><span className="sr-only">Details</span></th>}</tr></thead><tbody>{visible.map(v => <tr key={v.id} className={minutesOverdue(v, now) !== null ? 'row-overdue' : undefined}>
+            <td className="cell-patient"><div className="patient-cell">{!wall && <span className={`patient-avatar priority-border-${v.priority}`}>{fullName(v).split(' ').map(n => n[0]).slice(0, 2).join('')}</span>}<div><strong>{wall ? v.patient_ref : fullName(v)}</strong><small title="Age calculated at arrival">{wall ? `${ageAtDate(v.date_of_birth, hospitalDate(v.arrived_at)) ?? '—'} years` : `${v.patient_ref} · ${ageAtDate(v.date_of_birth, hospitalDate(v.arrived_at)) ?? '—'} years`}</small>{!wall && <span className="complaint">{v.complaint ?? 'Complaint not yet recorded'}{v.identity_status === 'provisional' && <small>Provisional identity · {v.temporary_identifier}</small>}{v.names_need_review && <small>Name needs review</small>}</span>}</div></div></td>
+            <td className="cell-triage" data-label="Triage"><span className={`priority priority-${displayedPriority(v) ?? 0}`}><span />{displayedPriority(v) === null ? 'Not Yet Triaged' : priorities[displayedPriority(v)! - 1]}</span>{displayedPriority(v) !== null && <small className="triage-target">{triageCategories[displayedPriority(v)! - 1]?.target}</small>}{minutesOverdue(v, now) !== null && <span className="overdue"><AlertTriangle size={12} aria-hidden="true" />Overdue +{formatMinutes(minutesOverdue(v, now)!)}</span>}{context && <small>{triageLabel(v)} · {v.urgency_source === 'provisional_manual' ? 'Provisional manual urgency' : v.urgency_source === 'not_assessed' ? 'Not assessed' : 'Legacy/unassessed'}{v.latest_assessment_at ? ` · Latest completed assessment ${new Date(v.latest_assessment_at).toLocaleString()}` : ''}</small>}</td>
+            <td className="cell-status" data-label="Status"><span className={`care-status status-${v.status}`}>{statuses[v.status]}</span></td>
+            <td className="cell-location" data-label="Location"><span className="location"><BedDouble size={14} />{v.location || 'Unassigned'}</span></td>
+            <td className="cell-next" data-label="Next step"><div className="next-step">{actions[v.next_action]}{!context && queuePosition(v, data.visits) !== null && <small><span className="queue-number">#{queuePosition(v, data.visits)}</span> in this service queue</small>}</div></td>
+            <td className={`cell-clinician ${v.assigned_to === 'Unassigned' || !v.assigned_to ? 'muted' : ''}`} data-label="Clinician">{v.assigned_to || 'Unassigned'}</td>
+            <td className="cell-time" data-label="Time in ED"><span className="time"><Clock3 size={14} />{waitLabel(v.arrived_at, active(v) ? now : Date.parse(v.updated_at))}</span></td>
+            {!wall && <td className="cell-open"><button className="icon-button" aria-label={`View ${fullName(v)}`} onClick={() => setEditor(v)}><ChevronRight size={18} /></button></td>}
           </tr>)}</tbody></table></div>
           {!visible.length && <div className="empty"><Users size={28} /><h3>{loading ? 'Loading patients…' : 'No patients to show'}</h3><p>{loading ? 'Fetching the latest board.' : 'Change your filters or register a patient.'}</p></div>}
           <footer className="board-footer"><span><ShieldCheck size={14} />Priorities assigned by clinical staff · Queue positions can change</span><span>{syncedAt ? `Last synced ${new Date(syncedAt).toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' })}` : 'Not synchronised'}</span></footer>
@@ -200,10 +226,18 @@ function Board({ email, context, onLogout }: { email?: string; context?: Hospita
         })}</section>}
         {context && view==='activity' && data.capabilities?.includes('audit.summary.read') && <ReadContext.Provider value={{context,requests,onAccessDenied:clearProtected}}><HistoryPage<{id:string;action:string;created_at:string;summary:string}> kind="audit" filters={{}} label="Audit summaries" render={e=><p>{e.created_at} · {e.action} · {e.summary}</p>}/></ReadContext.Provider>}
         {!context && view === 'activity' && <section className="activity-panel"><h2>Recent changes</h2>{!data.events.length && <div className="empty"><ClipboardList size={28} /><h3>No changes yet</h3><p>Register or update a patient to see activity here.</p></div>}{data.events.map(event => <div className="activity-event" key={event.id}><span className="event-icon"><ClipboardList size={16} /></span><div><strong>{event.summary}</strong><small>{event.actor} · {new Date(event.created_at).toLocaleString('en-ZA')}</small></div><span className="count-pill">{event.action}</span></div>)}</section>}
+        {view === 'help' && <HelpPage target={helpTarget} />}
+        {view === 'theatre' && theatreEnabled && <Suspense fallback={<p role="status">Loading theatre list…</p>}><TheatreList visits={current} now={now} wall={wall} onNotice={setNotice} onDenied={clearProtected} /></Suspense>}
+        {view === 'settings' && <Suspense fallback={<p role="status">Loading settings…</p>}><SettingsPage email={email} role={data.role} textSize={textSize} onTextSize={chooseTextSize} onLogout={supabase ? () => void onLogout() : undefined} onHelp={openHelp} theatreEnabled={theatreEnabled} /></Suspense>}
         {context && data.capabilities?.includes('membership.manage') && <HospitalStaff key={context.id} context={context} requests={requests} onAccessDenied={clearProtected} />}
-        <p className="page-footnote">PatientFlow <span>•</span> Emergency care workspace {wall && <span>• Patient names hidden in display mode</span>}</p>
+        <footer className="app-footer">
+          <div className="footer-brand"><span className="brand-icon footer-icon"><Activity size={16} /></span><div><strong>PatientFlow</strong><small>{wall ? 'Display mode · patient names hidden' : 'Emergency care workspace'}</small></div></div>
+          {!wall && <nav className="footer-links" aria-label="Footer"><button className="link-button" onClick={() => openHelp(null)}>Help</button><button className="link-button" onClick={() => setView('settings')}>Settings</button></nav>}
+          <div className="footer-credit"><span>{developerCredit}</span>{!wall && <span>Support: <span className="copyable">{supportEmail}</span></span>}</div>
+        </footer>
       </div>
     </main>
+    {exporting && <Suspense fallback={null}><ExportDialog scope={view === 'theatre' ? 'theatre' : view === 'archive' ? 'completed' : 'board'} filters={view === 'theatre' ? { q: '', priority: 'all', status: 'all', action: 'all' } : { q: search, priority, status, action }} shownCount={visible.length} onClose={() => setExporting(false)} onHelp={openHelp} onExported={message => { setExporting(false); setNotice(message); void refresh(); }} /></Suspense>}
     {editor && <ReadContext.Provider value={context?{context,requests,onAccessDenied:clearProtected}:null}><VisitDialog requests={requests} onAccessDenied={clearProtected} context={context} visit={editor === 'new' ? undefined : editor} data={data} readonly={!(editor === 'new' ? permission.register : permission.update) || editor !== 'new' && editor.priority === null} onClose={() => setEditor(null)} onSaved={async () => { setEditor(null); await refresh(); setNotice(editor === 'new' ? 'Patient registered.' : 'Patient record updated.'); }} /></ReadContext.Provider>}
   </div>;
 }
